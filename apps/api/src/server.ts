@@ -3,6 +3,7 @@ import multipart from '@fastify/multipart';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerConversionRoutes } from './modules/conversions/conversion.routes.js';
 import { registerHealthRoutes } from './modules/health/health.routes.js';
+import { registerPhaseZeroRoutes } from './modules/phase0/phase0.routes.js';
 import type { AppConfig } from './config/env.js';
 
 export async function createServer(config: AppConfig): Promise<FastifyInstance> {
@@ -25,6 +26,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   });
 
   registerHealthRoutes(server);
+  registerPhaseZeroRoutes(server, config);
   registerConversionRoutes(server, config);
 
   server.setErrorHandler((error, _request, reply) => {
