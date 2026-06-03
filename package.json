@@ -3,25 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "dev:web": "npm run build --workspace @vidlive/shared && npm run dev --workspace @vidlive/web",
-    "dev:api": "npm run build --workspace @vidlive/shared && npm run dev --workspace @vidlive/api",
-    "build": "npm run build --workspaces --if-present",
-    "types": "npm run types --workspaces --if-present",
+    "dev:web": "pnpm --filter @vidlive/shared run build && pnpm --filter @vidlive/web run dev",
+    "dev:api": "pnpm --filter @vidlive/shared run build && pnpm --filter @vidlive/api run dev",
+    "build": "pnpm -r run build",
+    "types": "pnpm -r run types",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
   "engines": {
     "node": ">=20.0.0",
-    "npm": ">=10.0.0"
+    "pnpm": ">=10.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "^8.5.15"
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "eslint": "^9.0.0",
+    "eslint-config-next": "^16.2.7",
     "prettier": "^3.0.0",
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.0.0"

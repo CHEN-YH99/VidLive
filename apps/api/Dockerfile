@@ -4,16 +4,18 @@ RUN apk add --no-cache ffmpeg perl perl-image-exiftool
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+RUN corepack enable
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/api/package.json apps/api/package.json
 COPY packages/shared/package.json packages/shared/package.json
 
-RUN npm ci --omit=dev
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY . .
 
-RUN npm run build --workspace @vidlive/shared && npm run build --workspace @vidlive/api
+RUN pnpm --filter @vidlive/shared run build && pnpm --filter @vidlive/api run build
 
 EXPOSE 3001
 
-CMD ["node", "apps/api/dist/index.js"]
+CMD ["pnpm", "--filter", "@vidlive/api", "start"]

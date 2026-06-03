@@ -13,7 +13,7 @@
   "dependencies": {
     "@fastify/cors": "^10.0.0",
     "@fastify/multipart": "^9.0.0",
-    "@vidlive/shared": "file:../../packages/shared",
+    "@vidlive/shared": "workspace:*",
     "dotenv": "^16.4.0",
     "fastify": "^5.0.0"
   },
