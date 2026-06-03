@@ -2,6 +2,6 @@
 > @vidlive/api@0.1.0 dev E:\个人项目\VidLive\apps\api
 > tsx watch src/index.ts
 
-{"level":30,"time":1780491539860,"pid":28912,"hostname":"DESKTOP-8612IP1","msg":"Server listening at http://127.0.0.1:3101"}
-{"level":30,"time":1780491549107,"pid":28912,"hostname":"DESKTOP-8612IP1","reqId":"req-1","req":{"method":"GET","url":"/api/health","host":"127.0.0.1:3101","remoteAddress":"127.0.0.1","remotePort":53032},"msg":"incoming request"}
-{"level":30,"time":1780491549109,"pid":28912,"hostname":"DESKTOP-8612IP1","reqId":"req-1","res":{"statusCode":200},"responseTime":2.314500004053116,"msg":"request completed"}
+{"level":30,"time":1780493680381,"pid":17524,"hostname":"DESKTOP-8612IP1","msg":"Server listening at http://127.0.0.1:3101"}
+{"level":30,"time":1780493685431,"pid":17524,"hostname":"DESKTOP-8612IP1","reqId":"req-1","req":{"method":"GET","url":"/api/health","host":"127.0.0.1:3101","remoteAddress":"127.0.0.1","remotePort":51158},"msg":"incoming request"}
+{"level":30,"time":1780493685434,"pid":17524,"hostname":"DESKTOP-8612IP1","reqId":"req-1","res":{"statusCode":200},"responseTime":2.184599995613098,"msg":"request completed"}

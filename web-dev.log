@@ -7,7 +7,7 @@
    - Network:      http://127.0.0.1:3100
 
  ✓ Starting...
- ✓ Ready in 1203ms
+ ✓ Ready in 1425ms
  ○ Compiling / ...
- ✓ Compiled / in 2.9s (617 modules)
- GET / 200 in 3219ms
+ ✓ Compiled / in 2.6s (637 modules)
+ GET / 200 in 2857ms
