@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String       @id @default(uuid()) @db.Uuid
+  email        String       @unique
+  passwordHash String       @map("password_hash")
+  username     String       @unique
+  planType     String       @default("free") @map("plan_type")
+  dailyQuota   Int          @default(5) @map("daily_quota")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  conversions  Conversion[]
+  usageLogs    UsageLog[]
+
+  @@map("users")
+}
+
+model Conversion {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String?   @map("user_id") @db.Uuid
+  user             User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  originalFilename String    @map("original_filename")
+  originalSize     BigInt    @map("original_size")
+  videoDuration    Float     @map("video_duration")
+  status           String
+  keyframeTime     Float?    @map("keyframe_time")
+  outputUrl        String?   @map("output_url")
+  errorMessage     String?   @map("error_message")
+  processingTime   Int?      @map("processing_time")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  expiresAt        DateTime? @map("expires_at")
+
+  @@index([userId], map: "idx_conversions_user")
+  @@index([status], map: "idx_conversions_status")
+  @@index([expiresAt], map: "idx_conversions_expires")
+  @@map("conversions")
+}
+
+model UsageLog {
+  id        BigInt   @id @default(autoincrement())
+  userId    String?  @map("user_id") @db.Uuid
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  timestamp DateTime @default(now())
+  metadata  Json?
+
+  @@index([userId, timestamp], map: "idx_usage_user_time")
+  @@map("usage_logs")
+}

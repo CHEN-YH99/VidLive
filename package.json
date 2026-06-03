@@ -1,0 +1,29 @@
+{
+  "name": "vidlive",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run build --workspace @vidlive/shared && npm run dev --workspace @vidlive/web",
+    "dev:api": "npm run build --workspace @vidlive/shared && npm run dev --workspace @vidlive/api",
+    "build": "npm run build --workspaces --if-present",
+    "types": "npm run types --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

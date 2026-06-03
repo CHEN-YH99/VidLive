@@ -1,0 +1,7 @@
+
+> @vidlive/api@0.1.0 dev
+> tsx watch src/index.ts
+
+{"level":30,"time":1780488969485,"pid":16576,"hostname":"DESKTOP-8612IP1","msg":"Server listening at http://127.0.0.1:3101"}
+{"level":30,"time":1780488979078,"pid":16576,"hostname":"DESKTOP-8612IP1","reqId":"req-1","req":{"method":"GET","url":"/api/health","host":"127.0.0.1:3101","remoteAddress":"127.0.0.1","remotePort":65358},"msg":"incoming request"}
+{"level":30,"time":1780488979080,"pid":16576,"hostname":"DESKTOP-8612IP1","reqId":"req-1","res":{"statusCode":200},"responseTime":2.169299989938736,"msg":"request completed"}
