@@ -167,3 +167,171 @@ export interface ConversionDraft {
   keyframeSeconds: number;
   muted: boolean;
 }
+
+export type ValidationStatus = 'pass' | 'warn' | 'pending';
+
+export interface ValidationModule {
+  id: string;
+  title: string;
+  summary: string;
+  status: ValidationStatus;
+  proof: string;
+}
+
+export interface SavePathStep {
+  id: string;
+  label: string;
+  status: ValidationStatus;
+  hint: string;
+  steps: string[];
+}
+
+export interface CompatibilityRow {
+  id: string;
+  environment: string;
+  priority: string;
+  importReady: ValidationStatus;
+  trimReady: ValidationStatus;
+  exportReady: ValidationStatus;
+  saveReady: ValidationStatus;
+  lockScreenReady: ValidationStatus;
+  note: string;
+}
+
+export interface ExitCriterion {
+  id: string;
+  title: string;
+  detail: string;
+}
+
+export const phaseZeroModules: ValidationModule[] = [
+  {
+    id: 'live-photo-poc',
+    title: 'Live Photo 生成 POC',
+    summary: '确认短视频能走完导入、裁剪、封面帧和导出组合。',
+    status: 'warn',
+    proof: '需要真机导入样例和导出包验证。',
+  },
+  {
+    id: 'save-path-matrix',
+    title: '保存路径矩阵',
+    summary: '验证 iPhone Safari、AirDrop、Shortcuts、桌面 ZIP 路径。',
+    status: 'pass',
+    proof: '已有路径说明，仍需真机复测。',
+  },
+  {
+    id: 'lockscreen-check',
+    title: '锁屏兼容检查',
+    summary: '对 1-2 秒竖屏片段、60 FPS 源素材和播放行为做矩阵记录。',
+    status: 'pending',
+    proof: '等待多机型和多 iOS 版本实测。',
+  },
+  {
+    id: 'local-first-check',
+    title: '本地优先验证',
+    summary: '确认 100MB 内素材不会上传服务器，失败再切换云端。',
+    status: 'pass',
+    proof: '前端已默认本地模式，云端为显式选择。',
+  },
+];
+
+export const savePathSteps: SavePathStep[] = [
+  {
+    id: 'iphone-safari',
+    label: 'iPhone Safari',
+    status: 'warn',
+    hint: '最接近真实用户路径。',
+    steps: ['导入素材', '下载导出包', '保存到相册', '检查锁屏设置'],
+  },
+  {
+    id: 'airdrop',
+    label: 'AirDrop',
+    status: 'pass',
+    hint: '手机和桌面之间的低摩擦迁移方式。',
+    steps: ['桌面生成 ZIP', '发送到 iPhone', '相册保存', '锁屏测试'],
+  },
+  {
+    id: 'shortcuts',
+    label: 'Shortcuts',
+    status: 'pending',
+    hint: '用于绕过浏览器写入限制的备用方案。',
+    steps: ['确认快捷指令', '导入文件', '写入相册', '再次播放验证'],
+  },
+  {
+    id: 'desktop-zip',
+    label: '桌面 ZIP 下载',
+    status: 'pass',
+    hint: '适合先在桌面完成完整导出。',
+    steps: ['生成 ZIP', '下载到本地', '传到手机', '复查封面帧'],
+  },
+];
+
+export const compatibilityRows: CompatibilityRow[] = [
+  {
+    id: 'iphone-safari',
+    environment: 'iPhone Safari',
+    priority: 'P0',
+    importReady: 'pass',
+    trimReady: 'pass',
+    exportReady: 'warn',
+    saveReady: 'warn',
+    lockScreenReady: 'pending',
+    note: '重点看保存路径和锁屏播放。',
+  },
+  {
+    id: 'macos-safari',
+    environment: 'macOS Safari',
+    priority: 'P0',
+    importReady: 'pass',
+    trimReady: 'pass',
+    exportReady: 'pass',
+    saveReady: 'pass',
+    lockScreenReady: 'pending',
+    note: '适合先做完整导出包验证。',
+  },
+  {
+    id: 'chrome-desktop',
+    environment: 'Chrome Desktop',
+    priority: 'P1',
+    importReady: 'pass',
+    trimReady: 'pass',
+    exportReady: 'warn',
+    saveReady: 'pass',
+    lockScreenReady: 'pending',
+    note: '重点观察本地转码与下载行为。',
+  },
+  {
+    id: 'edge-desktop',
+    environment: 'Edge Desktop',
+    priority: 'P1',
+    importReady: 'pass',
+    trimReady: 'pass',
+    exportReady: 'warn',
+    saveReady: 'pass',
+    lockScreenReady: 'pending',
+    note: '重点检查兼容性和下载提示。',
+  },
+];
+
+export const phaseZeroExitCriteria: ExitCriterion[] = [
+  {
+    id: 'one-path',
+    title: '至少一条保存路径可用',
+    detail: '确认从浏览器到 iPhone 相册的完整链路。',
+  },
+  {
+    id: 'lockscreen-evidence',
+    title: '锁屏播放有真机记录',
+    detail: '记录成功/失败条件，不把结果写成猜测。',
+  },
+  {
+    id: 'local-first-proof',
+    title: '本地模式不上传素材',
+    detail: '抓包或日志确认不发送原始视频和缩略图。',
+  },
+  {
+    id: 'fallback-rule',
+    title: '云端兜底触发规则明确',
+    detail: '文件过大、编码不支持或本地失败时切换。',
+  },
+];
