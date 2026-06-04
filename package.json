@@ -13,6 +13,7 @@
     "phase:check": "node scripts/phase-gates.mjs",
     "phase:check:strict": "node scripts/phase-gates.mjs --strict",
     "smoke:phase2": "node scripts/phase2-smoke.mjs",
+    "smoke:phase3": "node scripts/phase3-smoke.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

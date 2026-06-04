@@ -4,7 +4,6 @@ import {
   productLimits,
   type AspectRatioId,
   type ConversionDraft,
-  type FitMode,
   type VideoMetadata,
 } from '@vidlive/shared';
 import { captureCoverFrame } from '@/lib/file-inspector';
@@ -301,7 +300,7 @@ async function recordVideoClip(videoUrl: string, draft: ConversionDraft, metadat
 
   video.currentTime = startSeconds;
   await waitForEvent(video, 'seeked');
-  drawVideoFrame(context, video, canvas, draft.fitMode);
+  drawVideoFrame(context, video, canvas, draft);
 
   const stream = canvas.captureStream(fps);
   const mimeType = selectRecorderMimeType();
@@ -327,7 +326,7 @@ async function recordVideoClip(videoUrl: string, draft: ConversionDraft, metadat
     const maxRuntimeMs = Math.max(2_000, (endSeconds - startSeconds + 1) * 1_500);
 
     const tick = () => {
-      drawVideoFrame(context, video, canvas, draft.fitMode);
+      drawVideoFrame(context, video, canvas, draft);
 
       if (video.currentTime >= endSeconds || video.ended) {
         resolve();
@@ -449,22 +448,45 @@ function drawVideoFrame(
   context: CanvasRenderingContext2D,
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
-  fitMode: FitMode,
+  draft: ConversionDraft,
 ): void {
   const sourceWidth = video.videoWidth || canvas.width;
   const sourceHeight = video.videoHeight || canvas.height;
+  const rotation = normalizeRotation(draft.rotationDegrees);
+  const rotated = rotation === 90 || rotation === 270;
+  const targetWidth = rotated ? canvas.height : canvas.width;
+  const targetHeight = rotated ? canvas.width : canvas.height;
   const scale =
-    fitMode === 'cover'
-      ? Math.max(canvas.width / sourceWidth, canvas.height / sourceHeight)
-      : Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight);
+    draft.fitMode === 'cover'
+      ? Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight)
+      : Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
   const drawWidth = sourceWidth * scale;
   const drawHeight = sourceHeight * scale;
-  const drawX = (canvas.width - drawWidth) / 2;
-  const drawY = (canvas.height - drawHeight) / 2;
 
   context.fillStyle = '#111827';
   context.fillRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(video, drawX, drawY, drawWidth, drawHeight);
+  context.save();
+  context.translate(canvas.width / 2, canvas.height / 2);
+  context.rotate((rotation * Math.PI) / 180);
+  context.scale(draft.flipHorizontal ? -1 : 1, draft.flipVertical ? -1 : 1);
+  context.filter = createCanvasFilter(draft);
+  context.drawImage(video, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+  context.restore();
+  context.filter = 'none';
+}
+
+function normalizeRotation(value: number): 0 | 90 | 180 | 270 {
+  const normalized = ((Math.round(value / 90) * 90) % 360 + 360) % 360;
+
+  return normalized === 90 || normalized === 180 || normalized === 270 ? normalized : 0;
+}
+
+function createCanvasFilter(draft: ConversionDraft): string {
+  return [
+    `brightness(${clampNumber(draft.brightness, 50, 150)}%)`,
+    `contrast(${clampNumber(draft.contrast, 50, 150)}%)`,
+    `saturate(${clampNumber(draft.saturation, 0, 200)}%)`,
+  ].join(' ');
 }
 
 function clampNumber(value: number, min: number, max: number): number {

@@ -26,6 +26,12 @@ interface CloudJobQuery {
   endSeconds?: string;
   keyframeSeconds?: string;
   muted?: string;
+  rotationDegrees?: string;
+  flipHorizontal?: string;
+  flipVertical?: string;
+  brightness?: string;
+  contrast?: string;
+  saturation?: string;
 }
 
 interface CloudJobParams {
@@ -193,11 +199,23 @@ function createDraftFromQuery(query: CloudJobQuery): ConversionDraft {
     presetId,
     aspectRatioId,
     fitMode,
+    rotationDegrees: readRotation(query.rotationDegrees),
+    flipHorizontal: query.flipHorizontal === 'true',
+    flipVertical: query.flipVertical === 'true',
+    brightness: readNumber(query.brightness, 100),
+    contrast: readNumber(query.contrast, 100),
+    saturation: readNumber(query.saturation, 100),
     startSeconds,
     endSeconds,
     keyframeSeconds,
     muted: query.muted !== 'false',
   };
+}
+
+function readRotation(value: string | undefined): 0 | 90 | 180 | 270 {
+  const parsed = Number(value);
+
+  return parsed === 90 || parsed === 180 || parsed === 270 ? parsed : 0;
 }
 
 function readNumber(value: string | undefined, fallback: number): number {

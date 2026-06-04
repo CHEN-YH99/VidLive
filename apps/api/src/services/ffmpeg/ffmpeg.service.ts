@@ -17,6 +17,14 @@ export interface ClipOptions {
   startSeconds: number;
   durationSeconds: number;
   muted: boolean;
+  edit?: {
+    rotationDegrees?: number;
+    flipHorizontal?: boolean;
+    flipVertical?: boolean;
+    brightness?: number;
+    contrast?: number;
+    saturation?: number;
+  };
 }
 
 export interface FrameOptions {
@@ -84,6 +92,14 @@ export class FfmpegService {
       options.durationSeconds.toString(),
       '-map',
       '0:v:0',
+    ];
+    const videoFilters = createVideoFilters(options.edit);
+
+    if (videoFilters.length > 0) {
+      args.push('-vf', videoFilters.join(','));
+    }
+
+    args.push(
       '-c:v',
       'libx264',
       '-pix_fmt',
@@ -94,7 +110,7 @@ export class FfmpegService {
       '23',
       '-movflags',
       '+faststart',
-    ];
+    );
 
     if (options.muted) {
       args.push('-an');
@@ -134,6 +150,50 @@ export class FfmpegService {
 
     return options.outputPath;
   }
+}
+
+function createVideoFilters(edit: ClipOptions['edit']): string[] {
+  if (!edit) {
+    return [];
+  }
+
+  const filters: string[] = [];
+  const rotation = normalizeRotation(edit.rotationDegrees ?? 0);
+
+  if (rotation === 90) {
+    filters.push('transpose=1');
+  } else if (rotation === 270) {
+    filters.push('transpose=2');
+  } else if (rotation === 180) {
+    filters.push('hflip', 'vflip');
+  }
+
+  if (edit.flipHorizontal) {
+    filters.push('hflip');
+  }
+
+  if (edit.flipVertical) {
+    filters.push('vflip');
+  }
+
+  if ((edit.brightness ?? 100) !== 100 || (edit.contrast ?? 100) !== 100 || (edit.saturation ?? 100) !== 100) {
+    const brightness = ((clampNumber(edit.brightness ?? 100, 50, 150) - 100) / 100).toFixed(2);
+    const contrast = (clampNumber(edit.contrast ?? 100, 50, 150) / 100).toFixed(2);
+    const saturation = (clampNumber(edit.saturation ?? 100, 0, 200) / 100).toFixed(2);
+    filters.push(`eq=brightness=${brightness}:contrast=${contrast}:saturation=${saturation}`);
+  }
+
+  return filters;
+}
+
+function normalizeRotation(value: number): 0 | 90 | 180 | 270 {
+  const normalized = ((Math.round(value / 90) * 90) % 360 + 360) % 360;
+
+  return normalized === 90 || normalized === 180 || normalized === 270 ? normalized : 0;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
 function parseFrameRate(value: string | undefined): number | null {

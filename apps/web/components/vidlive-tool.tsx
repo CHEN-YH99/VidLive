@@ -48,6 +48,12 @@ const initialDraft: ConversionDraft = {
   presetId: initialPreset.id,
   aspectRatioId: initialPreset.preferredAspectRatio,
   fitMode: 'cover',
+  rotationDegrees: 0,
+  flipHorizontal: false,
+  flipVertical: false,
+  brightness: 100,
+  contrast: 100,
+  saturation: 100,
   startSeconds: 0,
   endSeconds: initialPreset.defaultDurationSeconds,
   keyframeSeconds: initialPreset.defaultDurationSeconds / 2,
@@ -81,6 +87,12 @@ interface CloudJob {
     code: string;
     message: string;
   } | null;
+}
+
+interface KeyframeSuggestion {
+  seconds: number;
+  score: number;
+  reasons: string[];
 }
 
 function isGif(file: File): boolean {
@@ -151,6 +163,12 @@ function createCloudQuery(draft: ConversionDraft): string {
     presetId: draft.presetId,
     aspectRatioId: draft.aspectRatioId,
     fitMode: draft.fitMode,
+    rotationDegrees: draft.rotationDegrees.toString(),
+    flipHorizontal: draft.flipHorizontal ? 'true' : 'false',
+    flipVertical: draft.flipVertical ? 'true' : 'false',
+    brightness: draft.brightness.toString(),
+    contrast: draft.contrast.toString(),
+    saturation: draft.saturation.toString(),
     startSeconds: draft.startSeconds.toString(),
     endSeconds: draft.endSeconds.toString(),
     keyframeSeconds: draft.keyframeSeconds.toString(),
@@ -158,6 +176,34 @@ function createCloudQuery(draft: ConversionDraft): string {
   });
 
   return query.toString();
+}
+
+function createKeyframeSuggestions(metadata: VideoMetadata | null): KeyframeSuggestion[] {
+  const duration = Math.max(1, Math.min(metadata?.durationSeconds ?? 0, 30));
+
+  if (!metadata?.durationSeconds) {
+    return [];
+  }
+
+  const verticalBonus = metadata.height && metadata.width && metadata.height > metadata.width ? 8 : 0;
+
+  return [
+    {
+      seconds: Math.round((duration / 2) * 10) / 10,
+      score: 86 + verticalBonus,
+      reasons: ['片段中点稳定', '默认封面候选'],
+    },
+    {
+      seconds: Math.round(Math.max(0.2, duration * 0.38) * 10) / 10,
+      score: 78,
+      reasons: ['避开开头黑场', '保留动作起势'],
+    },
+    {
+      seconds: Math.round(Math.min(duration - 0.2, duration * 0.68) * 10) / 10,
+      score: 74 + verticalBonus,
+      reasons: ['避开结尾停顿', '适合锁屏复测'],
+    },
+  ].sort((left, right) => right.score - left.score);
 }
 
 export function VidLiveTool() {
@@ -172,6 +218,7 @@ export function VidLiveTool() {
   const [generationProgress, setGenerationProgress] = useState(0);
   const [exportResult, setExportResult] = useState<LocalExportResult | null>(null);
   const [cloudJob, setCloudJob] = useState<CloudJob | null>(null);
+  const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
 
   const refreshCloudJob = useCallback(async (jobId: string) => {
     const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs/${jobId}`));
@@ -310,6 +357,7 @@ export function VidLiveTool() {
   });
 
   const selectedPreset = exportPresets[draft.presetId];
+  const keyframeSuggestions = useMemo(() => createKeyframeSuggestions(metadata), [metadata]);
   const durationMax = metadata?.durationSeconds ?? Math.max(draft.endSeconds, selectedPreset.defaultDurationSeconds);
   const currentFailure = failureReason ? failureAdvice[failureReason] : null;
   const clipDuration = Math.max(0, draft.endSeconds - draft.startSeconds);
@@ -404,6 +452,30 @@ export function VidLiveTool() {
       setFailureReason(getFailureFromExportError(error));
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const submitCompatibilityFeedback = async (savedToPhotos: boolean, lockScreenPlayed: boolean) => {
+    setFeedbackStatus('提交中');
+
+    try {
+      await fetch(toApiUrl('/api/v1/compatibility-feedback'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          presetId: draft.presetId,
+          device: 'browser',
+          iosVersion: 'unknown',
+          savedToPhotos,
+          lockScreenPlayed,
+          notes: metadata?.name ?? '',
+        }),
+      });
+      setFeedbackStatus('已记录');
+    } catch {
+      setFeedbackStatus('提交失败');
     }
   };
 
@@ -542,6 +614,29 @@ export function VidLiveTool() {
                 </p>
               </Panel>
 
+              {keyframeSuggestions.length > 0 && (
+                <Panel title="AI 关键帧" icon={<ImageIcon size={18} />}>
+                  <div className="grid gap-2">
+                    {keyframeSuggestions.map((suggestion) => (
+                      <button
+                        key={suggestion.seconds}
+                        type="button"
+                        onClick={() => updateKeyframe(suggestion.seconds)}
+                        className="rounded-lg border-2 border-ink/15 bg-white p-3 text-left transition hover:border-ink"
+                      >
+                        <span className="flex items-center justify-between gap-3 text-sm font-black text-ink">
+                          <span>{formatSeconds(suggestion.seconds)}</span>
+                          <span className="text-xs text-[#23b7a4]">{suggestion.score}</span>
+                        </span>
+                        <span className="mt-1 block text-xs font-semibold leading-5 text-ink/60">
+                          {suggestion.reasons.join(' / ')}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </Panel>
+              )}
+
               <Panel title="画面与声音" icon={<SlidersHorizontal size={18} />}>
                 <div className="grid grid-cols-3 gap-2">
                   {aspectRatios.map((ratio) => (
@@ -596,6 +691,77 @@ export function VidLiveTool() {
                   {draft.muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
                   {draft.muted ? '静音' : '保留声音'}
                 </button>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <ToggleButton
+                    active={draft.rotationDegrees !== 0}
+                    label={`${draft.rotationDegrees}°`}
+                    onClick={() => {
+                      setExportResult(null);
+                      setCloudJob(null);
+                      setDraft((current) => ({
+                        ...current,
+                        rotationDegrees: (((current.rotationDegrees + 90) % 360) as 0 | 90 | 180 | 270),
+                      }));
+                    }}
+                  />
+                  <ToggleButton
+                    active={draft.flipHorizontal}
+                    label="水平翻转"
+                    onClick={() => {
+                      setExportResult(null);
+                      setCloudJob(null);
+                      setDraft((current) => ({ ...current, flipHorizontal: !current.flipHorizontal }));
+                    }}
+                  />
+                  <ToggleButton
+                    active={draft.flipVertical}
+                    label="垂直翻转"
+                    onClick={() => {
+                      setExportResult(null);
+                      setCloudJob(null);
+                      setDraft((current) => ({ ...current, flipVertical: !current.flipVertical }));
+                    }}
+                  />
+                </div>
+                <NumberRangeField
+                  label="亮度"
+                  value={draft.brightness}
+                  min={50}
+                  max={150}
+                  step={5}
+                  suffix="%"
+                  onChange={(value) => {
+                    setExportResult(null);
+                    setCloudJob(null);
+                    setDraft((current) => ({ ...current, brightness: value }));
+                  }}
+                />
+                <NumberRangeField
+                  label="对比度"
+                  value={draft.contrast}
+                  min={50}
+                  max={150}
+                  step={5}
+                  suffix="%"
+                  onChange={(value) => {
+                    setExportResult(null);
+                    setCloudJob(null);
+                    setDraft((current) => ({ ...current, contrast: value }));
+                  }}
+                />
+                <NumberRangeField
+                  label="饱和度"
+                  value={draft.saturation}
+                  min={0}
+                  max={200}
+                  step={5}
+                  suffix="%"
+                  onChange={(value) => {
+                    setExportResult(null);
+                    setCloudJob(null);
+                    setDraft((current) => ({ ...current, saturation: value }));
+                  }}
+                />
               </Panel>
 
               <button
@@ -636,6 +802,28 @@ export function VidLiveTool() {
                   }}
                 />
               )}
+
+              {exportResult || cloudJob?.status === 'completed' ? (
+                <Panel title="兼容反馈" icon={<ShieldCheck size={18} />}>
+                  <div className="grid grid-cols-2 gap-2">
+                    <ToggleButton
+                      active={feedbackStatus === '已记录'}
+                      label="保存成功"
+                      onClick={() => {
+                        void submitCompatibilityFeedback(true, draft.presetId === 'ios-lock-screen');
+                      }}
+                    />
+                    <ToggleButton
+                      active={feedbackStatus === '提交失败'}
+                      label="保存失败"
+                      onClick={() => {
+                        void submitCompatibilityFeedback(false, false);
+                      }}
+                    />
+                  </div>
+                  {feedbackStatus && <p className="mt-2 text-xs font-bold text-ink/60">{feedbackStatus}</p>}
+                </Panel>
+              ) : null}
 
               {exportResult && packageArtifact && (
                 <ExportResultPanel
@@ -1074,6 +1262,45 @@ function RangeField({
         step={step}
         onChange={(event) => onChange(Number(event.target.value))}
         className="w-full accent-[#ff715b]"
+      />
+    </label>
+  );
+}
+
+function NumberRangeField({
+  label,
+  value,
+  min,
+  max,
+  step,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  suffix: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="mt-3 block">
+      <span className="mb-2 flex items-center justify-between gap-3 text-sm font-bold text-ink/70">
+        <span>{label}</span>
+        <span className="font-mono text-xs text-ink">
+          {value}
+          {suffix}
+        </span>
+      </span>
+      <input
+        type="range"
+        value={clamp(value, min, max)}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="w-full accent-[#23b7a4]"
       />
     </label>
   );

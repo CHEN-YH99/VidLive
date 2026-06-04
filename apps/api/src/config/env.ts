@@ -10,6 +10,7 @@ export interface AppConfig {
   localFileSizeBytes: number;
   cloudFileSizeBytes: number;
   cloudRetentionHours: number;
+  jwtSecret: string;
 }
 
 function readNumber(name: string, fallback: number): number {
@@ -38,5 +39,6 @@ export function loadConfig(): AppConfig {
     localFileSizeBytes: readNumber('MAX_LOCAL_FILE_SIZE', productLimits.localFileSizeBytes),
     cloudFileSizeBytes: readNumber('MAX_CLOUD_FILE_SIZE', productLimits.cloudFileSizeBytes),
     cloudRetentionHours: readNumber('CLOUD_RETENTION_HOURS', 24),
+    jwtSecret: process.env.JWT_SECRET ?? 'dev-vidlive-secret-change-me',
   };
 }

@@ -101,6 +101,27 @@ export async function collectPhaseGates(options = {}) {
     '提交云端任务',
   ]));
 
+  const v1Routes = await readOptional(root, 'apps/api/src/modules/v1/v1.routes.ts');
+  const v1Service = await readOptional(root, 'apps/api/src/modules/v1/v1.service.ts');
+  gates.push(staticGate('phase3.v1-api', 'Phase 3 V1.0 API', 'Phase 3', v1Routes + v1Service, [
+    '/api/v1/auth/register',
+    '/api/v1/auth/login',
+    '/api/v1/usage',
+    '/api/v1/keyframes/recommendations',
+    '/api/v1/compatibility-feedback',
+    '/api/v1/metrics/summary',
+    '/api/v1/launch-readiness',
+  ]));
+
+  const ffmpegService = await readOptional(root, 'apps/api/src/services/ffmpeg/ffmpeg.service.ts');
+  gates.push(staticGate('phase3.basic-editing', 'Phase 3 基础编辑生效链路', 'Phase 3', localExport + ffmpegService + webTool, [
+    'rotationDegrees',
+    'flipHorizontal',
+    'createCanvasFilter',
+    'createVideoFilters',
+    'NumberRangeField',
+  ]));
+
   const phase0Record = await readOptional(root, 'Phase0技术兼容验证记录.md');
   const phase0ManualPassed = hasManualPassMarker(phase0Record, 'Phase 0 手动验收状态');
   gates.push({
@@ -135,6 +156,18 @@ export async function collectPhaseGates(options = {}) {
     detail: phase2ManualPassed
       ? 'Phase 2 Beta 手动验收记录已标记通过。'
       : '请补云端任务、下载删除、过期、移动端、错误诊断和性能记录后再标记通过。',
+  });
+
+  const phase3Record = await readOptional(root, 'Phase3V1验收记录.md');
+  const phase3ManualPassed = hasManualPassMarker(phase3Record, 'V1.0 手动验收状态');
+  gates.push({
+    id: 'phase3.manual-evidence',
+    phase: 'Phase 3',
+    title: 'V1.0 正式版验收证据',
+    status: phase3ManualPassed ? 'pass' : 'blocked',
+    detail: phase3ManualPassed
+      ? 'Phase 3 V1.0 手动验收记录已标记通过。'
+      : '请补账号、配额、AI、基础编辑、兼容反馈、监控和上线准备证据后再标记通过。',
   });
 
   return gates;

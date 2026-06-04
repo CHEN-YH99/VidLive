@@ -32,6 +32,8 @@ export type AspectRatioId = 'source' | '9:16' | '1:1' | '4:5' | '16:9';
 
 export type FitMode = 'cover' | 'contain';
 
+export type RotationDegrees = 0 | 90 | 180 | 270;
+
 export interface ExportPreset {
   id: ExportPresetId;
   label: string;
@@ -162,6 +164,12 @@ export interface ConversionDraft {
   presetId: ExportPresetId;
   aspectRatioId: AspectRatioId;
   fitMode: FitMode;
+  rotationDegrees: RotationDegrees;
+  flipHorizontal: boolean;
+  flipVertical: boolean;
+  brightness: number;
+  contrast: number;
+  saturation: number;
   startSeconds: number;
   endSeconds: number;
   keyframeSeconds: number;

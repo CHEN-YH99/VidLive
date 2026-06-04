@@ -55,6 +55,7 @@ export class LivePhotoService {
       startSeconds,
       durationSeconds,
       muted: input.draft.muted,
+      edit: input.draft,
     });
 
     await this.injectLivePhotoMetadata({
