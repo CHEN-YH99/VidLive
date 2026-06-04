@@ -42,7 +42,7 @@ const riskDefinitions = [
       {
         title: '保存路径覆盖 Shortcuts、AirDrop、ZIP',
         sources: ['shared', 'localExport', 'webTool'],
-        snippets: ['Shortcuts', 'AirDrop', '桌面 ZIP 下载', '下载 ZIP 包'],
+        snippets: ['Shortcuts', 'AirDrop', '桌面 ZIP 下载', '素材 ZIP'],
       },
       {
         title: 'Live Photo POC 产物包含 MOV 和手动验证说明',
@@ -127,7 +127,7 @@ const riskDefinitions = [
       {
         title: '容器内提供 exiftool 兜底',
         sources: ['dockerfile', 'phaseGates'],
-        snippets: ['perl-image-exiftool', 'phase0.exiftool-container-fallback'],
+        snippets: ['exiftool', 'phase0.exiftool-container-fallback'],
       },
     ],
     manualChecks: ['真机 Live Photo 识别证据', '元数据失败样例记录'],

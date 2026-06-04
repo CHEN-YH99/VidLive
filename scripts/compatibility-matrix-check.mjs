@@ -54,7 +54,7 @@ const matrixDefinitions = [
       {
         title: '桌面 ZIP 下载和 AirDrop 指引',
         sources: ['webTool', 'localExport'],
-        snippets: ['桌面下载路径', '下载 ZIP 包', 'AirDrop', 'application/zip'],
+        snippets: ['桌面下载路径', '素材 ZIP', 'AirDrop', 'application/zip'],
       },
     ],
     manualChecks: ['macOS Safari 导入', 'macOS Safari 导出', '下载 ZIP', 'AirDrop 路径'],
@@ -72,7 +72,7 @@ const matrixDefinitions = [
       {
         title: '本地处理和 MP4/GIF 兜底导出',
         sources: ['shared', 'localExport', 'webTool'],
-        snippets: ['generateLocalExport', 'MediaRecorder', "outputs: ['mp4', 'gif']", 'downloadBlob'],
+        snippets: ['generateLocalExport', 'MediaRecorder', "outputs: ['mp4', 'gif', 'webp']", 'downloadBlob'],
       },
     ],
     manualChecks: ['Chrome 桌面本地处理', 'Chrome 桌面 MP4 导出', 'Chrome 桌面 GIF 导出'],

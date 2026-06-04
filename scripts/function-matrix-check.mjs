@@ -130,8 +130,8 @@ const matrixDefinitions = [
           "'standard-live-photo'",
           "'ios-lock-screen'",
           "'social-fallback'",
-          "outputs: ['zip', 'mov', 'jpeg', 'mp4']",
-          "outputs: ['mp4', 'gif']",
+          "outputs: ['zip', 'mov', 'jpeg', 'mp4', 'webp']",
+          "outputs: ['mp4', 'gif', 'webp']",
         ],
       },
       {

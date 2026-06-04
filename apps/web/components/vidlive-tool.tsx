@@ -70,7 +70,15 @@ const phaseSteps = [
   { label: '导出', icon: <Download size={15} /> },
 ];
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
+function resolveApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_BASE_URL) {
+    return process.env.NEXT_PUBLIC_API_BASE_URL;
+  }
+
+  return '/api/proxy';
+}
+
+const apiBaseUrl = resolveApiBaseUrl();
 
 const backgroundColorOptions = [
   { label: '深色', value: '#111827' },
@@ -513,7 +521,7 @@ export function VidLiveTool() {
             <div className="flex flex-wrap gap-2">
               <StatusPill icon={<ShieldCheck size={15} />} label="本地优先" />
               <StatusPill icon={<Clock3 size={15} />} label="1-30 秒" />
-              <StatusPill icon={<FileArchive size={15} />} label="ZIP 导出" />
+              <StatusPill icon={<FileArchive size={15} />} label="素材包导出" />
             </div>
           </header>
 
@@ -583,7 +591,7 @@ export function VidLiveTool() {
                   <ModeButton
                     active={draft.mode === 'cloud'}
                     label="云端"
-                    description="Beta 兜底"
+                    description="元数据实验"
                     onClick={() => {
                       setExportResult(null);
                       setCloudJob(null);
@@ -599,7 +607,7 @@ export function VidLiveTool() {
                 <div className="grid gap-2">
                   <div className="rounded-lg border-2 border-ink/15 bg-white p-3">
                     <p className="text-sm font-black text-ink">Free</p>
-                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、本地导出、标准预设。</p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、本地素材包、标准预设。</p>
                   </div>
                   <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-3 shadow-clay-sm">
                     <p className="text-sm font-black text-ink">Pro Monthly</p>
@@ -612,7 +620,8 @@ export function VidLiveTool() {
 
               <Panel title="扩展工具箱" icon={<Film size={18} />}>
                 <div className="grid gap-2">
-                  <ToolboxItem label="Video/GIF to Live Photo" status="available" />
+                  <ToolboxItem label="Video/GIF to Live Photo 素材包" status="available" />
+                  <ToolboxItem label="相册 Live Photo 写入" status="preview" />
                   <ToolboxItem label="Live Photo to GIF/MP4" status="preview" />
                   <ToolboxItem label="Image to Live Photo" status="preview" />
                   <ToolboxItem label="AI Image Motion" status="planned" />
@@ -1074,14 +1083,14 @@ function SavePathPanel({ presetId }: { presetId: ExportPresetId }) {
         title={isLockScreen ? 'iPhone 锁屏路径' : 'iPhone 相册路径'}
         text={
           isLockScreen
-            ? '下载 ZIP 后把动态片段传到 iPhone，按锁屏壁纸流程复测播放。'
-            : '下载 ZIP 后通过文件 App、相册或 Shortcuts 完成保存验证。'
+            ? 'Safari 下载 ZIP 后只会得到文件 App 素材包；要变成锁屏实况，还需云端元数据和真机导入路径验证。'
+            : 'Safari 下载 ZIP 后通过文件 App 查看素材包；这一步不会自动写入 iOS 相册成为实况照片。'
         }
       />
       <SavePathCard
         icon={<MonitorDown size={20} />}
         title="桌面下载路径"
-        text="下载 ZIP、关键帧和动态片段，再通过 AirDrop 或数据线发送到 iPhone。"
+        text="下载 ZIP、关键帧和动态片段；后续用 AirDrop、Shortcuts 或容器云端包验证相册识别。"
       />
     </section>
   );
@@ -1154,7 +1163,7 @@ function ExportResultPanel({
         className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5"
       >
         <FileArchive size={16} />
-        下载 ZIP 包
+        下载素材 ZIP
       </button>
       {result.warnings.length > 0 && (
         <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#fff4df] p-3">
@@ -1252,6 +1261,15 @@ function CloudJobPanel({
         </p>
       </div>
 
+      {job.status === 'completed' && (
+        <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#fff4df] p-3">
+          <p className="text-xs font-black text-ink">实况识别说明</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
+            云端 ZIP 是带元数据尝试的配对素材包；Safari 直接下载仍不会自动写入相册，需通过 AirDrop、Shortcuts 或真机导入路径复测。
+          </p>
+        </div>
+      )}
+
       {job.error && (
         <div className="mt-3 rounded-lg border-2 border-ink bg-[#ffe2dc] p-3">
           <p className="text-xs font-black text-ink">{job.error.code}</p>
@@ -1295,7 +1313,7 @@ function CloudJobPanel({
           className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-3 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
         >
           <FileArchive size={16} />
-          下载
+          下载素材包
         </button>
         <button
           type="button"

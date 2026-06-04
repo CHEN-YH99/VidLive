@@ -47,16 +47,16 @@ export interface ExportPreset {
 export const exportPresets: Record<ExportPresetId, ExportPreset> = {
   'standard-live-photo': {
     id: 'standard-live-photo',
-    label: '标准 Live Photo',
-    target: '相册保存和后续导入',
+    label: '标准 Live Photo 素材包',
+    target: '导出素材包，待相册或云端导入验证',
     defaultDurationSeconds: 3,
     preferredAspectRatio: 'source',
     outputs: ['zip', 'mov', 'jpeg', 'mp4', 'webp'],
   },
   'ios-lock-screen': {
     id: 'ios-lock-screen',
-    label: 'iOS 锁屏壁纸',
-    target: 'iOS 17+ 锁屏播放优先',
+    label: 'iOS 锁屏素材包',
+    target: 'iOS 17+ 锁屏播放待真机验证',
     defaultDurationSeconds: 2,
     preferredAspectRatio: '9:16',
     preferredFps: 60,

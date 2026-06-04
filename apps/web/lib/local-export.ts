@@ -60,7 +60,10 @@ export async function generateLocalExport(
   const createdAt = new Date().toISOString();
   const baseName = `${sanitizeFileName(removeExtension(file.name))}-${draft.presetId}-${exportId.slice(0, 8)}`;
   const durationSeconds = Math.max(productLimits.minDurationSeconds, draft.endSeconds - draft.startSeconds);
-  const warnings: string[] = [];
+  const warnings: string[] = [
+    '当前本地导出的是 ZIP 素材包；iPhone Safari 下载后会保存在文件 App，不会自动写入相册成为实况照片。',
+    '完整 Live Photo 识别需要云端/容器注入 Apple 元数据，并通过 AirDrop、Shortcuts 或相册导入路径做真机验证。',
+  ];
   const artifacts: LocalExportArtifact[] = [];
 
   let coverBlob: Blob | null = null;
@@ -74,7 +77,7 @@ export async function generateLocalExport(
         id: 'cover',
         kind: 'cover',
         label: '关键帧 JPEG',
-        description: '用于 Live Photo 静态封面和导出结果预览。',
+        description: '用于后续 Live Photo 封面验证和导出结果预览。',
         fileName: `${baseName}-cover.jpg`,
         mimeType: coverBlob.type,
         blob: coverBlob,
@@ -115,18 +118,33 @@ export async function generateLocalExport(
       warnings.push('浏览器本地录制暂不保留原始音频；需要音频时请在 Beta 云端处理。');
     }
 
-    const clipBlob = await recordVideoClip(previewUrl, draft, metadata);
-    const clipExtension = getVideoExtension(clipBlob.type);
+    try {
+      const clipBlob = await recordVideoClip(previewUrl, draft, metadata);
+      const clipExtension = getVideoExtension(clipBlob.type);
 
-    artifacts.push({
-      id: 'clip',
-      kind: 'clip',
-      label: `${clipExtension.toUpperCase()} 动态片段`,
-      description: '按时间轴和画面比例生成的本地动态片段。',
-      fileName: `${baseName}-clip.${clipExtension}`,
-      mimeType: clipBlob.type || `video/${clipExtension}`,
-      blob: clipBlob,
-    });
+      artifacts.push({
+        id: 'clip',
+        kind: 'clip',
+        label: `${clipExtension.toUpperCase()} 动态片段`,
+        description: '按时间轴和画面比例生成的本地动态片段。',
+        fileName: `${baseName}-clip.${clipExtension}`,
+        mimeType: clipBlob.type || `video/${clipExtension}`,
+        blob: clipBlob,
+      });
+    } catch {
+      const sourceExtension = getSourceExtension(file);
+
+      warnings.push('浏览器本地录制动态片段失败，导出包已保留原始视频作为兜底素材；请缩短片段、降低分辨率，或切换 Beta 云端处理。');
+      artifacts.push({
+        id: 'source-video',
+        kind: 'source',
+        label: '原始视频兜底',
+        description: '本地裁剪录制失败时保留的原始素材，方便继续用 Shortcuts、AirDrop 或云端处理复测。',
+        fileName: `${baseName}-source${sourceExtension}`,
+        mimeType: file.type || (sourceExtension === '.mov' ? 'video/quicktime' : 'video/mp4'),
+        blob: file,
+      });
+    }
   }
 
   const manifestBlob = createJsonBlob({
@@ -140,8 +158,10 @@ export async function generateLocalExport(
     },
     draft,
     preset,
+    livePhotoRecognition: 'not-ready-local-web-export',
+    metadataInjected: false,
     warnings,
-    note: 'Phase 1 本地 MVP 导出包。Apple Live Photo 完整元数据和真机保存路径仍需按兼容矩阵验证。',
+    note: 'Phase 1 本地 MVP 导出包。当前 ZIP 只是文件 App 可下载素材包，不会自动成为 iOS 相册实况照片；Apple Live Photo 完整元数据和真机保存路径仍需按兼容矩阵验证。',
   });
   const readmeBlob = createTextBlob(createReadmeText(draft, warnings));
 
@@ -182,8 +202,8 @@ export async function generateLocalExport(
       {
         id: 'package',
         kind: 'package',
-        label: '导出 ZIP 包',
-        description: '包含封面、动态片段、manifest 和保存指引。',
+        label: '素材 ZIP 包',
+        description: '包含封面、动态片段、manifest 和保存指引；iPhone Safari 下载后不会直接变成相册实况照片。',
         fileName: `${baseName}.zip`,
         mimeType: 'application/zip',
         blob: packageBlob,
@@ -235,6 +255,16 @@ function sanitizeFileName(value: string): string {
 
 function getVideoExtension(mimeType: string): 'mp4' | 'webm' {
   return mimeType.includes('mp4') ? 'mp4' : 'webm';
+}
+
+function getSourceExtension(file: File): '.mp4' | '.mov' {
+  const extension = file.name.toLowerCase().match(/\.[^.]+$/)?.[0];
+
+  if (extension === '.mov') {
+    return '.mov';
+  }
+
+  return '.mp4';
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -294,6 +324,8 @@ function createReadmeText(draft: ConversionDraft, warnings: string[]): string {
   return [
     'VidLive Phase 1 本地导出包',
     '',
+    '重要说明：当前 ZIP 是本地素材包。iPhone Safari 下载后只是文件 App 里的视频、关键帧和说明文件，不会自动变成 iOS 相册里的实况照片。若要验证真正 Live Photo，需要走云端元数据包、AirDrop/Shortcuts 或后续真机导入流程。',
+    '',
     `预设：${preset.label}`,
     `片段：${draft.startSeconds.toFixed(2)}s - ${draft.endSeconds.toFixed(2)}s`,
     `关键帧：${draft.keyframeSeconds.toFixed(2)}s`,
@@ -301,14 +333,14 @@ function createReadmeText(draft: ConversionDraft, warnings: string[]): string {
     `画面：${draft.fitMode === 'cover' ? '裁切填满' : '保留完整画面并补背景'}`,
     '',
     '保存路径建议：',
-    '1. iPhone Safari：下载导出包后，按页面指引通过相册、文件 App 或 Shortcuts 保存。',
+    '1. iPhone Safari：下载导出包后先在文件 App 查看；不要把 ZIP 下载成功当成相册 Live Photo 成功。',
     '2. 桌面浏览器：下载 ZIP 后，通过 AirDrop 或数据线发送到 iPhone。',
     '3. 锁屏壁纸：优先使用 1-2 秒竖屏片段，确认 iOS 17+ 和 Live 开关。',
     '',
     '注意：',
     warningText,
     '',
-    '当前为 Phase 1 MVP。本地包用于跑通导入、裁剪、关键帧和导出闭环；Apple Live Photo 完整元数据仍需真机验证。',
+    '当前为 Phase 1 MVP。本地包用于跑通导入、裁剪、关键帧和导出闭环；Apple Live Photo 完整元数据仍需云端/容器生成和真机验证。',
   ].join('\n');
 }
 

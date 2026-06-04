@@ -1,0 +1,15 @@
+.git
+.next
+.pnpm-store
+.turbo
+coverage
+dist
+node_modules
+**/node_modules
+tmp
+uploads
+evidence
+*.log
+*.tsbuildinfo
+.env
+.env.local

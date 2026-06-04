@@ -21,8 +21,16 @@ export interface LivePhotoGenerateResult {
   manifestPath: string;
   readmePath: string;
   contentId: string;
+  metadataInjected: boolean;
+  metadataInjection: LivePhotoMetadataInjectionReport;
   probe: ProbeResult;
   warnings: string[];
+}
+
+export interface LivePhotoMetadataInjectionReport {
+  videoContentIdentifierInjected: boolean;
+  photoContentIdentifierInjected: boolean;
+  photoImageUniqueIdInjected: boolean;
 }
 
 const execFileAsync = promisify(execFile);
@@ -67,12 +75,14 @@ export class LivePhotoService {
       edit: input.draft,
     });
 
-    await this.injectLivePhotoMetadata({
+    const metadataInjection = await this.injectLivePhotoMetadata({
       photoPath,
       movPath,
       contentId,
       warnings,
     });
+    const metadataInjected =
+      metadataInjection.videoContentIdentifierInjected && metadataInjection.photoContentIdentifierInjected;
 
     await writeFile(
       manifestPath,
@@ -81,6 +91,11 @@ export class LivePhotoService {
           phase: 'Phase 0',
           purpose: 'Live Photo technical compatibility POC',
           contentId,
+          metadataInjected,
+          metadataInjection,
+          livePhotoRecognition: metadataInjected
+            ? 'metadata-injected-import-still-requires-device-verification'
+            : 'not-ready-metadata-injection-missing',
           sourcePath: input.sourcePath,
           draft: {
             ...input.draft,
@@ -99,6 +114,7 @@ export class LivePhotoService {
           nextVerification: [
             'AirDrop ZIP to iPhone and try importing files.',
             'Verify whether Photos recognizes the pair as Live Photo.',
+            'Safari ZIP download alone is expected to stay as files, not a Photos Live Photo asset.',
             'Try iOS 17+ lock screen wallpaper with 1-2 second preset.',
           ],
         },
@@ -106,7 +122,7 @@ export class LivePhotoService {
         2,
       ),
     );
-    await writeFile(readmePath, createReadme(contentId, warnings));
+    await writeFile(readmePath, createReadme(contentId, metadataInjected, metadataInjection, warnings));
     await createStoreZip(
       [
         { sourcePath: photoPath, entryName: 'photo.jpg' },
@@ -126,6 +142,8 @@ export class LivePhotoService {
       manifestPath,
       readmePath,
       contentId,
+      metadataInjected,
+      metadataInjection,
       probe,
       warnings,
     };
@@ -136,12 +154,17 @@ export class LivePhotoService {
     movPath: string;
     contentId: string;
     warnings: string[];
-  }): Promise<void> {
+  }): Promise<LivePhotoMetadataInjectionReport> {
+    const report: LivePhotoMetadataInjectionReport = {
+      videoContentIdentifierInjected: false,
+      photoContentIdentifierInjected: false,
+      photoImageUniqueIdInjected: false,
+    };
     const exiftoolAvailable = await isCommandAvailable('exiftool', ['-ver']);
 
     if (!exiftoolAvailable) {
       input.warnings.push('exiftool-not-available: 已生成 MOV/JPEG/ZIP，但未完成 Apple Live Photo 元数据注入。');
-      return;
+      return report;
     }
 
     try {
@@ -152,16 +175,51 @@ export class LivePhotoService {
         '-QuickTime:Make=Apple',
         input.movPath,
       ]);
-      await execFileAsync('exiftool', [
-        '-overwrite_original',
-        `-XMP:ContentIdentifier=${input.contentId}`,
-        input.photoPath,
-      ]);
+      report.videoContentIdentifierInjected = await exifOutputContains(
+        input.movPath,
+        ['-ContentIdentifier'],
+        input.contentId,
+      );
+
+      if (!report.videoContentIdentifierInjected) {
+        input.warnings.push('mov-content-identifier-missing: MOV 未读回匹配的 ContentIdentifier。');
+      }
     } catch (error) {
       input.warnings.push(
-        `exiftool-metadata-failed: ${error instanceof Error ? error.message : 'Unknown exiftool error'}`,
+        `mov-metadata-failed: ${error instanceof Error ? error.message : 'Unknown exiftool error'}`,
       );
     }
+
+    try {
+      await execFileAsync('exiftool', [
+        '-overwrite_original',
+        `-ContentIdentifier=${input.contentId}`,
+        `-ImageUniqueID=${input.contentId}`,
+        input.photoPath,
+      ]);
+      report.photoContentIdentifierInjected = await exifOutputContains(
+        input.photoPath,
+        ['-ContentIdentifier'],
+        input.contentId,
+      );
+      report.photoImageUniqueIdInjected = await exifOutputContains(
+        input.photoPath,
+        ['-ImageUniqueID'],
+        input.contentId,
+      );
+
+      if (!report.photoContentIdentifierInjected) {
+        input.warnings.push(
+          'photo-content-identifier-missing: FFmpeg 生成的 JPEG 没有 Apple MakerNote ContentIdentifier；ExifTool 不能凭空创建该私有 MakerNote，需要原生 Live Photo 静态图模板或 macOS PhotoKit/AVFoundation 写入。',
+        );
+      }
+    } catch (error) {
+      input.warnings.push(
+        `photo-metadata-failed: ${error instanceof Error ? error.message : 'Unknown exiftool error'}`,
+      );
+    }
+
+    return report;
   }
 }
 
@@ -178,13 +236,39 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function createReadme(contentId: string, warnings: string[]): string {
+async function exifOutputContains(filePath: string, tags: string[], expectedValue: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync('exiftool', ['-a', '-G1', '-s', ...tags, filePath], {
+      timeout: 10_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+
+    return stdout.includes(expectedValue);
+  } catch {
+    return false;
+  }
+}
+
+function createReadme(
+  contentId: string,
+  metadataInjected: boolean,
+  metadataInjection: LivePhotoMetadataInjectionReport,
+  warnings: string[],
+): string {
   const warningText = warnings.length > 0 ? warnings.map((warning) => `- ${warning}`).join('\n') : '- 暂无。';
 
   return [
     'VidLive Phase 0 Live Photo POC',
     '',
     `Content Identifier: ${contentId}`,
+    `Metadata Injected: ${metadataInjected ? 'yes' : 'no'}`,
+    `MOV Content Identifier: ${metadataInjection.videoContentIdentifierInjected ? 'yes' : 'no'}`,
+    `Photo Content Identifier: ${metadataInjection.photoContentIdentifierInjected ? 'yes' : 'no'}`,
+    `Photo ImageUniqueID: ${metadataInjection.photoImageUniqueIdInjected ? 'yes' : 'no'}`,
+    '',
+    'Important:',
+    '- This ZIP is a paired media package, not a file that iPhone Safari can directly save as a Photos Live Photo.',
+    '- Photos recognition still depends on the import path and must be verified on real devices.',
     '',
     'Artifacts:',
     '- photo.jpg: extracted key frame',

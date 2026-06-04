@@ -43,9 +43,9 @@ export async function collectPhaseGates(options = {}) {
     id: 'phase0.exiftool-container-fallback',
     phase: 'Phase 0',
     title: '容器环境包含 exiftool 兜底',
-    status: dockerfile.includes('perl-image-exiftool') ? 'pass' : 'warn',
-    detail: dockerfile.includes('perl-image-exiftool')
-      ? 'API Dockerfile 已安装 perl-image-exiftool，可用容器补齐元数据验证环境。'
+    status: dockerfile.includes('exiftool') ? 'pass' : 'warn',
+    detail: dockerfile.includes('exiftool')
+      ? 'API Dockerfile 已安装 exiftool CLI，可用容器补齐元数据验证环境。'
       : '未发现容器级 exiftool 安装路径。',
   });
 

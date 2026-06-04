@@ -37,7 +37,7 @@ const p0Definitions = [
       {
         title: '保存路径覆盖 Shortcuts、AirDrop、ZIP',
         sources: ['shared', 'localExport', 'webTool'],
-        snippets: ['Shortcuts', 'AirDrop', '桌面 ZIP 下载', '下载 ZIP 包'],
+        snippets: ['Shortcuts', 'AirDrop', '桌面 ZIP 下载', '素材 ZIP'],
       },
     ],
     manualChecks: ['真机保存路径跑通', '失败路径记录'],
@@ -139,7 +139,7 @@ const p0Definitions = [
       {
         title: 'ZIP 和 artifact 下载已覆盖',
         sources: ['webTool', 'localExport'],
-        snippets: ['downloadBlob', '下载 ZIP 包', 'packageArtifact'],
+        snippets: ['downloadBlob', '素材 ZIP', 'packageArtifact'],
       },
     ],
     manualChecks: ['导出结果预览记录', 'ZIP 和 artifact 下载记录'],
