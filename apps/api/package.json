@@ -5,17 +5,22 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "worker": "tsx src/worker/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "types": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint ."
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1061.0",
+    "@aws-sdk/s3-request-presigner": "^3.1061.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/multipart": "^9.0.0",
     "@vidlive/shared": "workspace:*",
+    "bullmq": "^5.78.0",
     "dotenv": "^16.4.0",
-    "fastify": "^5.0.0"
+    "fastify": "^5.0.0",
+    "ioredis": "^5.10.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

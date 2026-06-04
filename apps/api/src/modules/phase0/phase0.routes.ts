@@ -177,6 +177,7 @@ function createDraftFromQuery(query: PhaseZeroPocQuery): ConversionDraft {
     presetId,
     aspectRatioId: query.aspectRatioId ?? preset.preferredAspectRatio,
     fitMode: query.fitMode ?? 'cover',
+    backgroundColor: '#111827',
     rotationDegrees: readRotation(query.rotationDegrees),
     flipHorizontal: query.flipHorizontal === 'true',
     flipVertical: query.flipVertical === 'true',

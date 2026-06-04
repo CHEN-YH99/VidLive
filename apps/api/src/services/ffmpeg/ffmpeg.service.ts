@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import type { AspectRatioId, FitMode } from '@vidlive/shared';
 
 export interface ProbeResult {
   durationSeconds: number;
@@ -18,6 +19,9 @@ export interface ClipOptions {
   durationSeconds: number;
   muted: boolean;
   edit?: {
+    aspectRatioId?: AspectRatioId;
+    fitMode?: FitMode;
+    backgroundColor?: string;
     rotationDegrees?: number;
     flipHorizontal?: boolean;
     flipVertical?: boolean;
@@ -183,7 +187,51 @@ function createVideoFilters(edit: ClipOptions['edit']): string[] {
     filters.push(`eq=brightness=${brightness}:contrast=${contrast}:saturation=${saturation}`);
   }
 
+  const targetSize = resolveTargetSize(edit.aspectRatioId);
+
+  if (targetSize) {
+    if (edit.fitMode === 'contain') {
+      filters.push(
+        `scale=${targetSize.width}:${targetSize.height}:force_original_aspect_ratio=decrease`,
+        `pad=${targetSize.width}:${targetSize.height}:(ow-iw)/2:(oh-ih)/2:color=${toFfmpegColor(edit.backgroundColor)}`,
+      );
+    } else {
+      filters.push(
+        `scale=${targetSize.width}:${targetSize.height}:force_original_aspect_ratio=increase`,
+        `crop=${targetSize.width}:${targetSize.height}`,
+      );
+    }
+  } else {
+    filters.push('scale=trunc(iw/2)*2:trunc(ih/2)*2');
+  }
+
   return filters;
+}
+
+function resolveTargetSize(aspectRatioId: AspectRatioId | undefined): { width: number; height: number } | null {
+  if (aspectRatioId === '9:16') {
+    return { width: 720, height: 1280 };
+  }
+
+  if (aspectRatioId === '1:1') {
+    return { width: 720, height: 720 };
+  }
+
+  if (aspectRatioId === '4:5') {
+    return { width: 720, height: 900 };
+  }
+
+  if (aspectRatioId === '16:9') {
+    return { width: 1280, height: 720 };
+  }
+
+  return null;
+}
+
+function toFfmpegColor(value: string | undefined): string {
+  const normalized = /^#[0-9a-f]{6}$/i.test(value ?? '') ? value! : '#111827';
+
+  return `0x${normalized.slice(1)}`;
 }
 
 function normalizeRotation(value: number): 0 | 90 | 180 | 270 {

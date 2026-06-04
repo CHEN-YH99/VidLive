@@ -22,6 +22,7 @@ interface CloudJobQuery {
   presetId?: ExportPresetId;
   aspectRatioId?: AspectRatioId;
   fitMode?: FitMode;
+  backgroundColor?: string;
   startSeconds?: string;
   endSeconds?: string;
   keyframeSeconds?: string;
@@ -39,7 +40,14 @@ interface CloudJobParams {
 }
 
 export function registerConversionRoutes(server: FastifyInstance, config: AppConfig): void {
-  const conversionService = new ConversionService();
+  const conversionService = new ConversionService({
+    config,
+    logger: server.log,
+  });
+
+  server.addHook('onClose', async () => {
+    await conversionService.close();
+  });
 
   server.get('/api/conversions/capabilities', async () => {
     return {
@@ -56,17 +64,23 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
       beta: {
         cloudJobsEndpoint: '/api/conversions/cloud-jobs',
         queue: {
-          provider: 'in-memory-beta',
+          provider: conversionService.queueProvider,
           retryable: true,
+          worker: conversionService.queueProvider === 'redis-bullmq' ? 'BullMQ Worker' : 'in-process fallback',
           statusEndpoint: '/api/conversions/cloud-jobs/:jobId',
         },
         storage: {
-          provider: 'local-temp-link',
+          provider: conversionService.storageProvider,
           retentionHours: config.cloudRetentionHours,
-          r2Ready: false,
+          r2Ready: conversionService.storageProvider === 'r2-signed-url',
         },
+        metricsEndpoint: '/api/conversions/metrics',
       },
     };
+  });
+
+  server.get('/api/conversions/metrics', async () => {
+    return conversionService.getMetrics();
   });
 
   server.post('/api/conversions/cloud-intents', async () => {
@@ -122,7 +136,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
       });
     }
 
-    const job = conversionService.createCloudJob({
+    const job = await conversionService.createCloudJob({
       id: jobId,
       sourcePath,
       workDir,
@@ -137,7 +151,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
   });
 
   server.get<{ Params: CloudJobParams }>('/api/conversions/cloud-jobs/:jobId', async (request, reply) => {
-    const job = conversionService.getCloudJob(request.params.jobId);
+    const job = await conversionService.getCloudJob(request.params.jobId);
 
     if (!job) {
       return reply.status(404).send({
@@ -199,6 +213,7 @@ function createDraftFromQuery(query: CloudJobQuery): ConversionDraft {
     presetId,
     aspectRatioId,
     fitMode,
+    backgroundColor: readBackgroundColor(query.backgroundColor),
     rotationDegrees: readRotation(query.rotationDegrees),
     flipHorizontal: query.flipHorizontal === 'true',
     flipVertical: query.flipVertical === 'true',
@@ -210,6 +225,10 @@ function createDraftFromQuery(query: CloudJobQuery): ConversionDraft {
     keyframeSeconds,
     muted: query.muted !== 'false',
   };
+}
+
+function readBackgroundColor(value: string | undefined): string {
+  return /^#[0-9a-f]{6}$/i.test(value ?? '') ? value! : '#111827';
 }
 
 function readRotation(value: string | undefined): 0 | 90 | 180 | 270 {

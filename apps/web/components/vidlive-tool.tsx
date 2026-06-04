@@ -14,6 +14,7 @@ import {
   Loader2,
   Lock,
   MonitorDown,
+  Palette,
   PlayCircle,
   Scissors,
   ShieldCheck,
@@ -25,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { type FileRejection, useDropzone } from 'react-dropzone';
+import QRCode from 'qrcode';
 import {
   aspectRatios,
   exportPresets,
@@ -48,6 +50,7 @@ const initialDraft: ConversionDraft = {
   presetId: initialPreset.id,
   aspectRatioId: initialPreset.preferredAspectRatio,
   fitMode: 'cover',
+  backgroundColor: '#111827',
   rotationDegrees: 0,
   flipHorizontal: false,
   flipVertical: false,
@@ -68,6 +71,14 @@ const phaseSteps = [
 ];
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
+
+const backgroundColorOptions = [
+  { label: '深色', value: '#111827' },
+  { label: '白色', value: '#ffffff' },
+  { label: '暖色', value: '#fff4df' },
+  { label: '浅蓝', value: '#e4f7ff' },
+  { label: '浅绿', value: '#d9f99d' },
+] as const;
 
 type CloudJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
 
@@ -163,6 +174,7 @@ function createCloudQuery(draft: ConversionDraft): string {
     presetId: draft.presetId,
     aspectRatioId: draft.aspectRatioId,
     fitMode: draft.fitMode,
+    backgroundColor: draft.backgroundColor,
     rotationDegrees: draft.rotationDegrees.toString(),
     flipHorizontal: draft.flipHorizontal ? 'true' : 'false',
     flipVertical: draft.flipVertical ? 'true' : 'false',
@@ -715,6 +727,34 @@ export function VidLiveTool() {
                     }}
                   />
                 </div>
+                <div className="mt-3">
+                  <span className="mb-2 flex items-center gap-2 text-sm font-bold text-ink/70">
+                    <Palette size={15} />
+                    背景色
+                  </span>
+                  <div className="grid grid-cols-5 gap-2">
+                    {backgroundColorOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-label={`背景色 ${option.label}`}
+                        title={option.label}
+                        onClick={() => {
+                          setExportResult(null);
+                          setCloudJob(null);
+                          setDraft((current) => ({ ...current, backgroundColor: option.value }));
+                        }}
+                        className={[
+                          'h-9 rounded-lg border-2 shadow-clay-sm transition hover:-translate-y-0.5',
+                          draft.backgroundColor === option.value ? 'border-ink' : 'border-ink/15',
+                        ].join(' ')}
+                        style={{ backgroundColor: option.value }}
+                      >
+                        <span className="sr-only">{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -840,6 +880,7 @@ export function VidLiveTool() {
               {cloudJob && (
                 <CloudJobPanel
                   job={cloudJob}
+                  downloadUrl={cloudJob.artifact ? toApiUrl(cloudJob.artifact.downloadUrl) : null}
                   onDownload={(url) => {
                     window.location.assign(toApiUrl(url));
                   }}
@@ -1146,13 +1187,16 @@ function ExportResultPanel({
 
 function CloudJobPanel({
   job,
+  downloadUrl,
   onDownload,
   onDelete,
 }: {
   job: CloudJob;
+  downloadUrl: string | null;
   onDownload: (url: string) => void;
   onDelete: () => Promise<void>;
 }) {
+  const [qrPreview, setQrPreview] = useState<{ downloadUrl: string; dataUrl: string } | null>(null);
   const statusCopy: Record<CloudJobStatus, string> = {
     queued: '排队中',
     processing: '处理中',
@@ -1161,7 +1205,37 @@ function CloudJobPanel({
     expired: '已过期',
     deleted: '已删除',
   };
-  const canDownload = job.status === 'completed' && job.artifact;
+  const canDownload = job.status === 'completed' && Boolean(job.artifact);
+  const activeDownloadUrl = canDownload ? downloadUrl : null;
+  const qrDataUrl = qrPreview?.downloadUrl === activeDownloadUrl ? qrPreview.dataUrl : null;
+
+  useEffect(() => {
+    if (!activeDownloadUrl) {
+      return;
+    }
+
+    let cancelled = false;
+
+    QRCode.toDataURL(activeDownloadUrl, {
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: 180,
+      color: {
+        dark: '#111827',
+        light: '#ffffff',
+      },
+    })
+      .then((nextQrDataUrl) => {
+        if (!cancelled) {
+          setQrPreview({ downloadUrl: activeDownloadUrl, dataUrl: nextQrDataUrl });
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDownloadUrl]);
 
   return (
     <Panel title="云端任务" icon={<CloudOff size={18} />}>
@@ -1193,6 +1267,19 @@ function CloudJobPanel({
               <li key={warning}>- {warning}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {qrDataUrl && activeDownloadUrl && (
+        <div
+          aria-label="二维码发送到手机"
+          className="mt-3 grid grid-cols-[96px,minmax(0,1fr)] gap-3 rounded-lg border-2 border-ink/15 bg-white p-3"
+        >
+          <img src={qrDataUrl} alt="" className="h-24 w-24 rounded-lg border border-ink/15 bg-white" />
+          <div className="flex flex-col justify-center">
+            <p className="text-sm font-black text-ink">手机扫码下载</p>
+            <p className="mt-1 break-all text-xs font-semibold leading-5 text-ink/60">{activeDownloadUrl}</p>
+          </div>
         </div>
       )}
 

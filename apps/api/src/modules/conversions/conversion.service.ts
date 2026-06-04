@@ -1,11 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { Queue, Worker, type Job } from 'bullmq';
+import { Redis } from 'ioredis';
 import type { ConversionDraft } from '@vidlive/shared';
+import type { AppConfig } from '../../config/env.js';
 import { LivePhotoService } from '../../services/live-photo/live-photo.service.js';
 import type { ProbeResult } from '../../services/ffmpeg/ffmpeg.service.js';
+import {
+  ObjectStorageService,
+  type ArtifactStorageProvider,
+} from '../../services/storage/object-storage.service.js';
 
 export type CloudConversionStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
+export type CloudQueueProvider = 'in-memory-beta' | 'redis-bullmq';
 
 export interface CloudConversionArtifact {
   kind: 'package';
@@ -13,6 +21,9 @@ export interface CloudConversionArtifact {
   sizeBytes: number;
   downloadUrl: string;
   deleteUrl: string;
+  storageProvider: ArtifactStorageProvider;
+  objectKey: string | null;
+  signedUrlExpiresAt: string | null;
 }
 
 export interface CloudConversionJob {
@@ -37,6 +48,15 @@ export interface CloudConversionJob {
   } | null;
 }
 
+export interface CloudConversionMetrics {
+  queueProvider: CloudQueueProvider;
+  storageProvider: ArtifactStorageProvider;
+  totals: Record<CloudConversionStatus, number>;
+  queueCounts: Record<string, number> | null;
+  activeJobs: number;
+  lastUpdatedAt: string;
+}
+
 export interface CreateCloudJobInput {
   id?: string;
   sourcePath: string;
@@ -54,12 +74,90 @@ interface CloudConversionJobRecord extends CloudConversionJob {
   zipPath: string | null;
 }
 
+interface CloudQueueResult {
+  probe: ProbeResult;
+  warnings: string[];
+  zipPath: string;
+  artifact: CloudConversionArtifact;
+}
+
+interface ConversionLogger {
+  info: (payload: unknown, message?: string) => void;
+  warn: (payload: unknown, message?: string) => void;
+  error: (payload: unknown, message?: string) => void;
+}
+
+interface ConversionServiceOptions {
+  config?: AppConfig;
+  livePhotoService?: LivePhotoService;
+  storageService?: ObjectStorageService;
+  runBullMqWorker?: boolean;
+  logger?: ConversionLogger;
+}
+
+const queueName = 'vidlive-cloud-conversions';
+
 export class ConversionService {
   private readonly jobs = new Map<string, CloudConversionJobRecord>();
+  private readonly livePhotoService: LivePhotoService;
+  private readonly storageService: ObjectStorageService;
+  private readonly logger: ConversionLogger | null;
+  private readonly redisConnection: Redis | null;
+  private readonly queue: Queue<CloudConversionJobRecord, CloudQueueResult, string> | null;
+  private readonly worker: Worker<CloudConversionJobRecord, CloudQueueResult, string> | null;
 
-  constructor(private readonly livePhotoService = new LivePhotoService()) {}
+  constructor(options: ConversionServiceOptions = {}) {
+    this.livePhotoService = options.livePhotoService ?? new LivePhotoService();
+    this.storageService = options.storageService ?? new ObjectStorageService(createStorageConfig(options.config));
+    this.logger = options.logger ?? null;
 
-  createCloudJob(input: CreateCloudJobInput): CloudConversionJob {
+    if (options.config?.redisUrl) {
+      this.redisConnection = new Redis(options.config.redisUrl, {
+        maxRetriesPerRequest: null,
+      });
+      this.redisConnection.on('error', (error) => {
+        this.logger?.error({ error }, 'Redis connection error.');
+      });
+      this.queue = new Queue<CloudConversionJobRecord, CloudQueueResult, string>(queueName, {
+        connection: this.redisConnection,
+      });
+      this.queue.on('error', (error) => {
+        this.logger?.error({ error }, 'BullMQ queue error.');
+      });
+      this.worker =
+        options.runBullMqWorker === false
+          ? null
+          : new Worker<CloudConversionJobRecord, CloudQueueResult, string>(
+              queueName,
+              (job) => this.processBullMqJob(job),
+              {
+                connection: this.redisConnection,
+                concurrency: Math.max(1, options.config.cloudQueueConcurrency),
+              },
+            );
+
+      this.worker?.on('failed', (job, error) => {
+        this.logger?.error({ jobId: job?.id, error }, 'BullMQ cloud conversion job failed.');
+      });
+      this.worker?.on('error', (error) => {
+        this.logger?.error({ error }, 'BullMQ worker error.');
+      });
+    } else {
+      this.redisConnection = null;
+      this.queue = null;
+      this.worker = null;
+    }
+  }
+
+  get queueProvider(): CloudQueueProvider {
+    return this.queue ? 'redis-bullmq' : 'in-memory-beta';
+  }
+
+  get storageProvider(): ArtifactStorageProvider {
+    return this.storageService.provider;
+  }
+
+  async createCloudJob(input: CreateCloudJobInput): Promise<CloudConversionJob> {
     this.cleanupExpiredJobs();
 
     const now = new Date();
@@ -88,13 +186,39 @@ export class ConversionService {
     };
 
     this.jobs.set(id, job);
-    void this.processJob(id);
+    this.logger?.info({ jobId: id, queueProvider: this.queueProvider }, 'Cloud conversion job accepted.');
+
+    if (this.queue) {
+      try {
+        await this.queue.add('convert-live-photo', job, {
+          jobId: id,
+          attempts: 2,
+          backoff: {
+            type: 'exponential',
+            delay: 2_000,
+          },
+          removeOnComplete: false,
+          removeOnFail: false,
+        });
+      } catch (error) {
+        this.logger?.error({ jobId: id, error }, 'BullMQ enqueue failed, falling back to in-memory processing.');
+        void this.processJob(id);
+      }
+    } else {
+      void this.processJob(id);
+    }
 
     return toPublicJob(job);
   }
 
-  getCloudJob(id: string): CloudConversionJob | null {
+  async getCloudJob(id: string): Promise<CloudConversionJob | null> {
     this.cleanupExpiredJobs();
+
+    const queueJob = await this.getBullMqJob(id);
+
+    if (queueJob) {
+      return this.toPublicBullMqJob(queueJob);
+    }
 
     const job = this.jobs.get(id);
 
@@ -105,25 +229,36 @@ export class ConversionService {
     this.cleanupExpiredJobs();
 
     const job = this.jobs.get(id);
+    const queueJob = await this.getBullMqJob(id);
+    const queueResult = isCompletedQueueJob(queueJob) ? queueJob.returnvalue : null;
+    const zipPath = job?.zipPath ?? queueResult?.zipPath ?? null;
+    const artifact = job?.artifact ?? queueResult?.artifact ?? null;
 
-    if (!job || job.status !== 'completed' || !job.zipPath || !job.artifact) {
+    if (!zipPath || !artifact) {
       return null;
     }
 
-    const fileStat = await stat(job.zipPath);
+    const fileStat = await stat(zipPath);
 
     return {
-      path: job.zipPath,
-      fileName: job.artifact.fileName,
+      path: zipPath,
+      fileName: artifact.fileName,
       sizeBytes: fileStat.size,
     };
   }
 
   async deleteCloudJob(id: string): Promise<CloudConversionJob | null> {
-    const job = this.jobs.get(id);
+    const queueJob = await this.getBullMqJob(id);
+    const queueResult = isCompletedQueueJob(queueJob) ? queueJob.returnvalue : null;
+    const job = this.jobs.get(id) ?? queueJob?.data ?? null;
 
     if (!job) {
       return null;
+    }
+
+    if (queueResult?.artifact && !job.artifact) {
+      job.artifact = queueResult.artifact;
+      job.zipPath = queueResult.zipPath;
     }
 
     await this.removeJobFiles(job);
@@ -133,8 +268,39 @@ export class ConversionService {
     job.artifact = null;
     job.zipPath = null;
     this.jobs.delete(id);
+    await queueJob?.remove();
+    this.logger?.info({ jobId: id }, 'Cloud conversion job deleted.');
 
     return toPublicJob(job);
+  }
+
+  async getMetrics(): Promise<CloudConversionMetrics> {
+    this.cleanupExpiredJobs();
+
+    const totals = createStatusTotals();
+
+    for (const job of this.jobs.values()) {
+      totals[job.status] += 1;
+    }
+
+    const queueCounts = this.queue
+      ? await this.queue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed', 'paused')
+      : null;
+
+    return {
+      queueProvider: this.queueProvider,
+      storageProvider: this.storageProvider,
+      totals,
+      queueCounts,
+      activeJobs: totals.queued + totals.processing + (queueCounts?.waiting ?? 0) + (queueCounts?.active ?? 0),
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+
+  async close(): Promise<void> {
+    await this.worker?.close();
+    await this.queue?.close();
+    this.redisConnection?.disconnect();
   }
 
   cleanupExpiredJobs(): void {
@@ -154,6 +320,10 @@ export class ConversionService {
     }
   }
 
+  private async getBullMqJob(id: string): Promise<Job<CloudConversionJobRecord, CloudQueueResult, string> | null> {
+    return (this.queue ? await this.queue.getJob(id) : null) ?? null;
+  }
+
   private async processJob(id: string): Promise<void> {
     const job = this.jobs.get(id);
 
@@ -162,10 +332,29 @@ export class ConversionService {
     }
 
     try {
+      await this.processJobRecord(job);
+    } catch {
+      // processJobRecord already persisted the failure on the job.
+    }
+  }
+
+  private async processBullMqJob(job: Job<CloudConversionJobRecord, CloudQueueResult, string>): Promise<CloudQueueResult> {
+    const record = this.jobs.get(job.data.id) ?? job.data;
+    this.jobs.set(record.id, record);
+    await job.updateProgress(25);
+    const result = await this.processJobRecord(record);
+    await job.updateProgress(100);
+
+    return result;
+  }
+
+  private async processJobRecord(job: CloudConversionJobRecord): Promise<CloudQueueResult> {
+    try {
       updateJob(job, {
         status: 'processing',
         progress: 25,
       });
+      this.logger?.info({ jobId: job.id }, 'Cloud conversion job started.');
 
       const result = await this.livePhotoService.generate({
         sourcePath: job.sourcePath,
@@ -173,6 +362,23 @@ export class ConversionService {
         draft: job.draft,
       });
       const packageStat = await stat(result.zipPath);
+      const fileName = `vidlive-beta-${job.id}.zip`;
+      const storedArtifact = await this.storageService.storeArtifact({
+        jobId: job.id,
+        fileName,
+        localPath: result.zipPath,
+        contentType: 'application/zip',
+      });
+      const artifact: CloudConversionArtifact = {
+        kind: 'package',
+        fileName,
+        sizeBytes: packageStat.size,
+        downloadUrl: storedArtifact.downloadUrl,
+        deleteUrl: `/api/conversions/cloud-jobs/${job.id}`,
+        storageProvider: storedArtifact.provider,
+        objectKey: storedArtifact.objectKey,
+        signedUrlExpiresAt: storedArtifact.signedUrlExpiresAt,
+      };
 
       updateJob(job, {
         status: 'completed',
@@ -180,14 +386,19 @@ export class ConversionService {
         probe: result.probe,
         warnings: result.warnings,
         zipPath: result.zipPath,
-        artifact: {
-          kind: 'package',
-          fileName: `vidlive-beta-${job.id}.zip`,
-          sizeBytes: packageStat.size,
-          downloadUrl: `/api/conversions/cloud-jobs/${job.id}/download`,
-          deleteUrl: `/api/conversions/cloud-jobs/${job.id}`,
-        },
+        artifact,
       });
+      this.logger?.info(
+        { jobId: job.id, storageProvider: artifact.storageProvider, sizeBytes: artifact.sizeBytes },
+        'Cloud conversion job completed.',
+      );
+
+      return {
+        probe: result.probe,
+        warnings: result.warnings,
+        zipPath: result.zipPath,
+        artifact,
+      };
     } catch (error) {
       updateJob(job, {
         status: 'failed',
@@ -197,12 +408,63 @@ export class ConversionService {
           message: error instanceof Error ? error.message : 'Cloud conversion failed.',
         },
       });
+      this.logger?.error({ jobId: job.id, error }, 'Cloud conversion job failed.');
+      throw error;
     }
   }
 
   private async removeJobFiles(job: CloudConversionJobRecord): Promise<void> {
+    await this.storageService.deleteArtifact(job.artifact?.objectKey ?? null);
     await rm(job.workDir, { recursive: true, force: true });
   }
+
+  private async toPublicBullMqJob(
+    queueJob: Job<CloudConversionJobRecord, CloudQueueResult, string>,
+  ): Promise<CloudConversionJob> {
+    const state = await queueJob.getState();
+    const record = this.jobs.get(queueJob.data.id) ?? queueJob.data;
+    const status = mapBullMqStateToStatus(state, record);
+    const result = status === 'completed' ? queueJob.returnvalue : null;
+    const progress = typeof queueJob.progress === 'number' ? queueJob.progress : record.progress;
+
+    return toPublicJob({
+      ...record,
+      status,
+      progress,
+      probe: result?.probe ?? record.probe,
+      warnings: result?.warnings ?? record.warnings,
+      artifact: result?.artifact ?? record.artifact,
+      zipPath: result?.zipPath ?? record.zipPath,
+      error:
+        status === 'failed'
+          ? {
+              code: 'cloud-conversion-failed',
+              message: queueJob.failedReason || record.error?.message || 'Cloud conversion failed.',
+            }
+          : record.error,
+    });
+  }
+}
+
+function createStorageConfig(config: AppConfig | undefined) {
+  return {
+    r2Endpoint: config?.r2Endpoint ?? null,
+    r2AccessKeyId: config?.r2AccessKeyId ?? null,
+    r2SecretAccessKey: config?.r2SecretAccessKey ?? null,
+    r2Bucket: config?.r2Bucket ?? null,
+    r2SignedUrlTtlSeconds: config?.r2SignedUrlTtlSeconds ?? 60 * 60,
+  };
+}
+
+function createStatusTotals(): Record<CloudConversionStatus, number> {
+  return {
+    queued: 0,
+    processing: 0,
+    completed: 0,
+    failed: 0,
+    expired: 0,
+    deleted: 0,
+  };
 }
 
 function updateJob(job: CloudConversionJobRecord, update: Partial<CloudConversionJobRecord>): void {
@@ -226,4 +488,30 @@ function toPublicJob(job: CloudConversionJobRecord): CloudConversionJob {
     warnings: job.warnings,
     error: job.error,
   };
+}
+
+function isCompletedQueueJob(
+  queueJob: Job<CloudConversionJobRecord, CloudQueueResult, string> | null,
+): queueJob is Job<CloudConversionJobRecord, CloudQueueResult, string> & { returnvalue: CloudQueueResult } {
+  return Boolean(queueJob?.returnvalue);
+}
+
+function mapBullMqStateToStatus(state: string, record: CloudConversionJobRecord): CloudConversionStatus {
+  if (Date.parse(record.expiresAt) <= Date.now()) {
+    return 'expired';
+  }
+
+  if (state === 'completed') {
+    return 'completed';
+  }
+
+  if (state === 'failed') {
+    return 'failed';
+  }
+
+  if (state === 'active') {
+    return 'processing';
+  }
+
+  return record.status === 'deleted' ? 'deleted' : 'queued';
 }

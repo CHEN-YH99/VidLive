@@ -463,7 +463,7 @@ function drawVideoFrame(
   const drawWidth = sourceWidth * scale;
   const drawHeight = sourceHeight * scale;
 
-  context.fillStyle = '#111827';
+  context.fillStyle = normalizeBackgroundColor(draft.backgroundColor);
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.save();
   context.translate(canvas.width / 2, canvas.height / 2);
@@ -487,6 +487,10 @@ function createCanvasFilter(draft: ConversionDraft): string {
     `contrast(${clampNumber(draft.contrast, 50, 150)}%)`,
     `saturate(${clampNumber(draft.saturation, 0, 200)}%)`,
   ].join(' ');
+}
+
+function normalizeBackgroundColor(value: string): string {
+  return /^#[0-9a-f]{6}$/i.test(value) ? value : '#111827';
 }
 
 function clampNumber(value: number, min: number, max: number): number {

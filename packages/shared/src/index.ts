@@ -164,6 +164,7 @@ export interface ConversionDraft {
   presetId: ExportPresetId;
   aspectRatioId: AspectRatioId;
   fitMode: FitMode;
+  backgroundColor: string;
   rotationDegrees: RotationDegrees;
   flipHorizontal: boolean;
   flipVertical: boolean;

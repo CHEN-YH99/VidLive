@@ -10,6 +10,13 @@ export interface AppConfig {
   localFileSizeBytes: number;
   cloudFileSizeBytes: number;
   cloudRetentionHours: number;
+  cloudQueueConcurrency: number;
+  redisUrl: string | null;
+  r2Endpoint: string | null;
+  r2AccessKeyId: string | null;
+  r2SecretAccessKey: string | null;
+  r2Bucket: string | null;
+  r2SignedUrlTtlSeconds: number;
   jwtSecret: string;
 }
 
@@ -29,6 +36,12 @@ function readNumber(name: string, fallback: number): number {
   return parsed;
 }
 
+function readOptionalString(name: string): string | null {
+  const value = process.env[name]?.trim();
+
+  return value ? value : null;
+}
+
 export function loadConfig(): AppConfig {
   return {
     host: process.env.API_HOST ?? '0.0.0.0',
@@ -39,6 +52,13 @@ export function loadConfig(): AppConfig {
     localFileSizeBytes: readNumber('MAX_LOCAL_FILE_SIZE', productLimits.localFileSizeBytes),
     cloudFileSizeBytes: readNumber('MAX_CLOUD_FILE_SIZE', productLimits.cloudFileSizeBytes),
     cloudRetentionHours: readNumber('CLOUD_RETENTION_HOURS', 24),
+    cloudQueueConcurrency: readNumber('CLOUD_QUEUE_CONCURRENCY', 1),
+    redisUrl: readOptionalString('REDIS_URL'),
+    r2Endpoint: readOptionalString('R2_ENDPOINT'),
+    r2AccessKeyId: readOptionalString('R2_ACCESS_KEY_ID'),
+    r2SecretAccessKey: readOptionalString('R2_SECRET_ACCESS_KEY'),
+    r2Bucket: readOptionalString('R2_BUCKET'),
+    r2SignedUrlTtlSeconds: readNumber('R2_SIGNED_URL_TTL_SECONDS', 60 * 60),
     jwtSecret: process.env.JWT_SECRET ?? 'dev-vidlive-secret-change-me',
   };
 }
