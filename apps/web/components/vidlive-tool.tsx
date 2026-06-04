@@ -586,6 +586,15 @@ export function VidLiveTool() {
                 </div>
               </Panel>
 
+              <Panel title="扩展工具箱" icon={<Film size={18} />}>
+                <div className="grid gap-2">
+                  <ToolboxItem label="Video/GIF to Live Photo" status="available" />
+                  <ToolboxItem label="Live Photo to GIF/MP4" status="preview" />
+                  <ToolboxItem label="Image to Live Photo" status="preview" />
+                  <ToolboxItem label="AI Image Motion" status="planned" />
+                </div>
+              </Panel>
+
               <Panel title="导出预设" icon={<Download size={18} />}>
                 <div className="grid gap-2">
                   {(Object.keys(exportPresets) as ExportPresetId[]).map((presetId) => (
@@ -1333,6 +1342,23 @@ function ToggleButton({ active, label, onClick }: { active: boolean; label: stri
     >
       {label}
     </button>
+  );
+}
+
+function ToolboxItem({ label, status }: { label: string; status: 'available' | 'preview' | 'planned' }) {
+  const statusClass = {
+    available: 'bg-[#d9f99d]',
+    preview: 'bg-[#e4f7ff]',
+    planned: 'bg-[#fff4df]',
+  }[status];
+
+  return (
+    <div className="flex min-h-12 items-center justify-between gap-3 rounded-lg border-2 border-ink/15 bg-white p-3">
+      <span className="text-sm font-black text-ink">{label}</span>
+      <span className={`rounded-lg border border-ink/15 px-2 py-1 text-xs font-black text-ink/65 ${statusClass}`}>
+        {status}
+      </span>
+    </div>
   );
 }
 

@@ -41,6 +41,14 @@ interface ExperimentQuery {
   visitorId?: string;
 }
 
+interface ApiKeyBody {
+  label?: string;
+}
+
+interface ToolParams {
+  toolId: string;
+}
+
 export function registerV1Routes(server: FastifyInstance, config: AppConfig): void {
   const service = new V1Service(config.jwtSecret);
 
@@ -256,6 +264,75 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
 
   server.get('/api/v1/admin/commercial-summary', async () => {
     return service.getCommercialSummary();
+  });
+
+  server.get('/api/v1/tools', async () => {
+    return {
+      tools: service.getExpansionTools(),
+    };
+  });
+
+  server.post<{ Params: ToolParams }>('/api/v1/tools/:toolId/intents', async (request, reply) => {
+    const user = authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: 'Bearer token is required.',
+      });
+    }
+
+    try {
+      return service.createToolIntent(user.id, request.params.toolId);
+    } catch (error) {
+      return sendV1Error(reply, error);
+    }
+  });
+
+  server.get('/api/v1/templates', async () => {
+    return {
+      templates: service.getTemplates(),
+    };
+  });
+
+  server.get('/api/v1/api-keys', async (request, reply) => {
+    const user = authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: 'Bearer token is required.',
+      });
+    }
+
+    return {
+      keys: service.listApiKeys(user.id),
+    };
+  });
+
+  server.post<{ Body: ApiKeyBody }>('/api/v1/api-keys', async (request, reply) => {
+    const user = authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: 'Bearer token is required.',
+      });
+    }
+
+    return service.createApiKey(user.id, request.body.label ?? 'Default API key');
+  });
+
+  server.get('/api/v1/extensions/browser-manifest', async () => {
+    return service.getBrowserExtensionManifest();
+  });
+
+  server.get('/api/v1/desktop/manifest', async () => {
+    return service.getDesktopManifest();
+  });
+
+  server.get('/api/v1/ecosystem/summary', async () => {
+    return service.getExpansionSummary();
   });
 }
 

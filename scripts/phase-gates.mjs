@@ -139,6 +139,24 @@ export async function collectPhaseGates(options = {}) {
     '历史记录',
   ]));
 
+  gates.push(staticGate('phase5.expansion-api', 'Phase 5 扩展平台 API', 'Phase 5', v1Routes + v1Service, [
+    '/api/v1/tools',
+    '/api/v1/templates',
+    '/api/v1/api-keys',
+    '/api/v1/extensions/browser-manifest',
+    '/api/v1/desktop/manifest',
+    '/api/v1/ecosystem/summary',
+    'getExpansionTools',
+  ]));
+
+  gates.push(staticGate('phase5.expansion-ui', 'Phase 5 扩展工具箱 UI', 'Phase 5', webTool, [
+    '扩展工具箱',
+    'Live Photo to GIF/MP4',
+    'Image to Live Photo',
+    'AI Image Motion',
+    'ToolboxItem',
+  ]));
+
   const phase0Record = await readOptional(root, 'Phase0技术兼容验证记录.md');
   const phase0ManualPassed = hasManualPassMarker(phase0Record, 'Phase 0 手动验收状态');
   gates.push({
@@ -197,6 +215,18 @@ export async function collectPhaseGates(options = {}) {
     detail: phase4ManualPassed
       ? 'Phase 4 商业化手动验收记录已标记通过。'
       : '请补支付、退款/取消、批量失败隔离、成本和免费转付费指标后再标记通过。',
+  });
+
+  const phase5Record = await readOptional(root, 'Phase5扩展阶段验收记录.md');
+  const phase5ManualPassed = hasManualPassMarker(phase5Record, '扩展阶段手动验收状态');
+  gates.push({
+    id: 'phase5.manual-evidence',
+    phase: 'Phase 5',
+    title: '扩展阶段生态验证证据',
+    status: phase5ManualPassed ? 'pass' : 'blocked',
+    detail: phase5ManualPassed
+      ? 'Phase 5 扩展阶段手动验收记录已标记通过。'
+      : '请补多工具真实转换、API 调用、模板使用、插件/客户端分发和生态指标后再标记通过。',
   });
 
   return gates;

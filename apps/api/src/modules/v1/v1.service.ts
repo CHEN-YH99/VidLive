@@ -89,6 +89,15 @@ interface ExperimentAssignment {
   createdAt: string;
 }
 
+interface ApiKeyRecord {
+  id: string;
+  userId: string;
+  label: string;
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
 export class V1Service {
   private readonly users = new Map<string, StoredUser>();
   private readonly usersByEmail = new Map<string, StoredUser>();
@@ -97,6 +106,7 @@ export class V1Service {
   private readonly checkoutIntents = new Map<string, CheckoutIntent>();
   private readonly batches = new Map<string, BatchJob>();
   private readonly experiments = new Map<string, ExperimentAssignment>();
+  private readonly apiKeys = new Map<string, ApiKeyRecord>();
 
   constructor(private readonly jwtSecret: string) {}
 
@@ -487,6 +497,213 @@ export class V1Service {
       freeToPaidRate: users.length > 0 ? users.filter((user) => user.planType === 'pro').length / users.length : 0,
       batches: this.batches.size,
       experiments: this.experiments.size,
+    };
+  }
+
+  getExpansionTools(): Array<{
+    id: string;
+    label: string;
+    status: 'available' | 'preview' | 'planned';
+    inputs: string[];
+    outputs: string[];
+    requiresPro: boolean;
+    apiEndpoint: string;
+  }> {
+    return [
+      {
+        id: 'video-to-live-photo',
+        label: 'Video/GIF to Live Photo',
+        status: 'available',
+        inputs: ['mp4', 'mov', 'gif'],
+        outputs: ['zip', 'mov', 'jpeg'],
+        requiresPro: false,
+        apiEndpoint: '/api/conversions/cloud-jobs',
+      },
+      {
+        id: 'live-photo-to-gif',
+        label: 'Live Photo to GIF',
+        status: 'preview',
+        inputs: ['zip', 'mov+jpeg'],
+        outputs: ['gif'],
+        requiresPro: true,
+        apiEndpoint: '/api/v1/tools/live-photo-to-gif/intents',
+      },
+      {
+        id: 'live-photo-to-mp4',
+        label: 'Live Photo to MP4',
+        status: 'preview',
+        inputs: ['zip', 'mov+jpeg'],
+        outputs: ['mp4'],
+        requiresPro: true,
+        apiEndpoint: '/api/v1/tools/live-photo-to-mp4/intents',
+      },
+      {
+        id: 'image-to-live-photo',
+        label: 'Image to Live Photo',
+        status: 'preview',
+        inputs: ['jpg', 'png', 'webp'],
+        outputs: ['zip', 'mov', 'jpeg'],
+        requiresPro: true,
+        apiEndpoint: '/api/v1/tools/image-to-live-photo/intents',
+      },
+      {
+        id: 'ai-image-motion',
+        label: 'AI Image Motion',
+        status: 'planned',
+        inputs: ['jpg', 'png', 'webp'],
+        outputs: ['mp4', 'live-photo-zip'],
+        requiresPro: true,
+        apiEndpoint: '/api/v1/tools/ai-image-motion/intents',
+      },
+    ];
+  }
+
+  getTemplates(): Array<{
+    id: string;
+    label: string;
+    category: 'lock-screen' | 'social' | 'seasonal';
+    presetId: string;
+    aspectRatioId: string;
+    durationSeconds: number;
+    requiresPro: boolean;
+  }> {
+    return [
+      {
+        id: 'ios-lock-clean',
+        label: 'Clean Lock Screen',
+        category: 'lock-screen',
+        presetId: 'ios-lock-screen',
+        aspectRatioId: '9:16',
+        durationSeconds: 2,
+        requiresPro: false,
+      },
+      {
+        id: 'social-loop-square',
+        label: 'Square Social Loop',
+        category: 'social',
+        presetId: 'social-fallback',
+        aspectRatioId: '1:1',
+        durationSeconds: 3,
+        requiresPro: false,
+      },
+      {
+        id: 'pro-cinematic-4k',
+        label: 'Pro Cinematic 4K',
+        category: 'seasonal',
+        presetId: 'standard-live-photo',
+        aspectRatioId: '16:9',
+        durationSeconds: 5,
+        requiresPro: true,
+      },
+    ];
+  }
+
+  createApiKey(userId: string, label: string): ApiKeyRecord {
+    this.requireUser(userId);
+
+    const secret = randomBytes(24).toString('base64url');
+    const record: ApiKeyRecord = {
+      id: randomUUID(),
+      userId,
+      label: label.trim() || 'Default API key',
+      prefix: `vl_${secret.slice(0, 10)}`,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: null,
+    };
+
+    this.apiKeys.set(record.id, record);
+    this.recordUsage(userId, 'api_key.created', {
+      id: record.id,
+      prefix: record.prefix,
+    });
+
+    return record;
+  }
+
+  listApiKeys(userId: string): ApiKeyRecord[] {
+    this.requireUser(userId);
+
+    return [...this.apiKeys.values()].filter((item) => item.userId === userId);
+  }
+
+  createToolIntent(userId: string, toolId: string): { id: string; toolId: string; status: 'accepted' | 'pro-required' | 'planned' } {
+    const user = this.requireUser(userId);
+    const tool = this.getExpansionTools().find((item) => item.id === toolId);
+
+    if (!tool) {
+      throw new V1Error('tool-not-found', 'Expansion tool was not found.');
+    }
+
+    if (tool.status === 'planned') {
+      return {
+        id: randomUUID(),
+        toolId,
+        status: 'planned',
+      };
+    }
+
+    if (tool.requiresPro && user.planType !== 'pro') {
+      return {
+        id: randomUUID(),
+        toolId,
+        status: 'pro-required',
+      };
+    }
+
+    this.recordUsage(user.id, 'expansion.tool_intent_created', {
+      toolId,
+    });
+
+    return {
+      id: randomUUID(),
+      toolId,
+      status: 'accepted',
+    };
+  }
+
+  getBrowserExtensionManifest(): {
+    name: string;
+    version: string;
+    permissions: string[];
+    endpoints: string[];
+  } {
+    return {
+      name: 'VidLive Extension Preview',
+      version: '0.1.0',
+      permissions: ['contextMenus', 'downloads', 'storage'],
+      endpoints: ['/api/v1/tools', '/api/v1/templates', '/api/conversions/cloud-jobs'],
+    };
+  }
+
+  getDesktopManifest(): {
+    name: string;
+    platforms: string[];
+    coreWorkflows: string[];
+    status: 'preview';
+  } {
+    return {
+      name: 'VidLive Desktop Preview',
+      platforms: ['macOS', 'Windows'],
+      coreWorkflows: ['drag-drop conversion', 'batch queue', 'AirDrop handoff', 'local export history'],
+      status: 'preview',
+    };
+  }
+
+  getExpansionSummary(): {
+    tools: number;
+    templates: number;
+    apiKeys: number;
+    previewTools: number;
+    plannedTools: number;
+  } {
+    const tools = this.getExpansionTools();
+
+    return {
+      tools: tools.length,
+      templates: this.getTemplates().length,
+      apiKeys: this.apiKeys.size,
+      previewTools: tools.filter((tool) => tool.status === 'preview').length,
+      plannedTools: tools.filter((tool) => tool.status === 'planned').length,
     };
   }
 
