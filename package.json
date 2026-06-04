@@ -12,6 +12,8 @@
     "test": "node --test scripts/*.test.mjs",
     "phase:check": "node scripts/phase-gates.mjs",
     "phase:check:strict": "node scripts/phase-gates.mjs --strict",
+    "milestones:check": "node scripts/milestones-check.mjs",
+    "milestones:check:strict": "node scripts/milestones-check.mjs --strict",
     "smoke:phase2": "node scripts/phase2-smoke.mjs",
     "smoke:phase3": "node scripts/phase3-smoke.mjs",
     "smoke:phase4": "node scripts/phase4-smoke.mjs",
