@@ -61,7 +61,8 @@ export async function collectPhaseGates(options = {}) {
 
   const conversionRoutes = await readOptional(root, 'apps/api/src/modules/conversions/conversion.routes.ts');
   const conversionService = await readOptional(root, 'apps/api/src/modules/conversions/conversion.service.ts');
-  gates.push(staticGate('phase2.cloud-api', 'Phase 2 云端任务 API', 'Phase 2', conversionRoutes + conversionService, [
+  const objectStorageService = await readOptional(root, 'apps/api/src/services/storage/object-storage.service.ts');
+  gates.push(staticGate('phase2.cloud-api', 'Phase 2 云端任务 API', 'Phase 2', conversionRoutes + conversionService + objectStorageService, [
     '/api/conversions/cloud-jobs',
     '/api/conversions/cloud-jobs/:jobId/download',
     'deleteCloudJob',
