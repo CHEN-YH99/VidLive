@@ -1067,6 +1067,29 @@ function ExportResultPanel({
   packageArtifact: LocalExportArtifact;
   onDownload: (artifact: LocalExportArtifact) => void;
 }) {
+  const previewArtifact = useMemo(
+    () =>
+      result.artifacts.find((artifact) => artifact.kind === 'cover') ??
+      result.artifacts.find((artifact) => artifact.kind === 'clip') ??
+      null,
+    [result.artifacts],
+  );
+  const resultPreviewUrl = useMemo(() => {
+    if (!previewArtifact) {
+      return null;
+    }
+
+    return URL.createObjectURL(previewArtifact.blob);
+  }, [previewArtifact]);
+
+  useEffect(() => {
+    return () => {
+      if (resultPreviewUrl) {
+        URL.revokeObjectURL(resultPreviewUrl);
+      }
+    };
+  }, [resultPreviewUrl]);
+
   return (
     <Panel title="导出结果" icon={<CheckCircle2 size={18} />}>
       <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-3">
@@ -1075,6 +1098,15 @@ function ExportResultPanel({
           {formatSeconds(result.durationSeconds)} / {new Date(result.createdAt).toLocaleString('zh-CN')}
         </p>
       </div>
+      {resultPreviewUrl && previewArtifact && (
+        <div aria-label="导出结果预览" className="mt-3 overflow-hidden rounded-lg border-2 border-ink bg-ink">
+          {previewArtifact.kind === 'cover' ? (
+            <img src={resultPreviewUrl} alt="" className="h-44 w-full object-contain" />
+          ) : (
+            <video src={resultPreviewUrl} className="h-44 w-full object-contain" muted playsInline controls />
+          )}
+        </div>
+      )}
       <button
         type="button"
         onClick={() => onDownload(packageArtifact)}

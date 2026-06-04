@@ -24,6 +24,8 @@
     "performance:check:strict": "node scripts/performance-check.mjs --strict",
     "risk:check": "node scripts/risk-register-check.mjs",
     "risk:check:strict": "node scripts/risk-register-check.mjs --strict",
+    "p0:check": "node scripts/p0-check.mjs",
+    "p0:check:strict": "node scripts/p0-check.mjs --strict",
     "smoke:phase2": "node scripts/phase2-smoke.mjs",
     "smoke:phase3": "node scripts/phase3-smoke.mjs",
     "smoke:phase4": "node scripts/phase4-smoke.mjs",
