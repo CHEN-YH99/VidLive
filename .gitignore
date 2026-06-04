@@ -1,12 +1,41 @@
-node_modules
-.pnpm-store
-dist
-.next
-.turbo
-.env
-.env.local
-coverage
-npm-debug.log*
+# Dependencies and package manager caches
+node_modules/
+.pnpm-store/
+
+# Build output and framework caches
+dist/
+**/dist/
+.next/
+**/.next/
+.turbo/
+coverage/
 *.tsbuildinfo
-uploads
-tmp
+
+# Local environment files
+.env*
+!.env.example
+
+# Logs and local process files
+*.log
+*.err.log
+*.pid
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime-generated media and temporary files
+uploads/
+tmp/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.eslintcache
+
+# Project docs: keep README files tracked, ignore other Markdown docs
+*.md
+!README*.md
+!readme*.md
+!**/README*.md
+!**/readme*.md
