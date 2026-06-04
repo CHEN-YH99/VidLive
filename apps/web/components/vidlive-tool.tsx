@@ -218,6 +218,7 @@ export function VidLiveTool() {
   const [generationProgress, setGenerationProgress] = useState(0);
   const [exportResult, setExportResult] = useState<LocalExportResult | null>(null);
   const [cloudJob, setCloudJob] = useState<CloudJob | null>(null);
+  const [cloudConsentConfirmed, setCloudConsentConfirmed] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
 
   const refreshCloudJob = useCallback(async (jobId: string) => {
@@ -313,6 +314,7 @@ export function VidLiveTool() {
       setCoverUrl(null);
       setExportResult(null);
       setCloudJob(null);
+      setCloudConsentConfirmed(false);
       setGenerationProgress(0);
 
       const objectUrl = URL.createObjectURL(selectedFile);
@@ -362,7 +364,10 @@ export function VidLiveTool() {
   const currentFailure = failureReason ? failureAdvice[failureReason] : null;
   const clipDuration = Math.max(0, draft.endSeconds - draft.startSeconds);
   const cloudBusy = isCloudJobActive(cloudJob);
-  const canGenerate = Boolean(file && previewUrl && metadata && !isReading && !isGenerating && !cloudBusy);
+  const cloudConsentRequired = draft.mode === 'cloud' && !cloudConsentConfirmed;
+  const canGenerate = Boolean(
+    file && previewUrl && metadata && !isReading && !isGenerating && !cloudBusy && !cloudConsentRequired,
+  );
   const packageArtifact = exportResult?.artifacts.find((artifact) => artifact.kind === 'package') ?? null;
 
   const updatePreset = (presetId: ExportPresetId) => {
@@ -413,6 +418,11 @@ export function VidLiveTool() {
   const handleGenerate = async () => {
     if (!file || !previewUrl || !metadata) {
       setFailureReason('metadata-read-failed');
+      return;
+    }
+
+    if (draft.mode === 'cloud' && !cloudConsentConfirmed) {
+      setFailureReason('cloud-required');
       return;
     }
 
@@ -553,6 +563,7 @@ export function VidLiveTool() {
                     onClick={() => {
                       setExportResult(null);
                       setCloudJob(null);
+                      setCloudConsentConfirmed(false);
                       setDraft((current) => ({ ...current, mode: 'local' }));
                       setFailureReason(null);
                     }}
@@ -564,6 +575,7 @@ export function VidLiveTool() {
                     onClick={() => {
                       setExportResult(null);
                       setCloudJob(null);
+                      setCloudConsentConfirmed(false);
                       setDraft((current) => ({ ...current, mode: 'cloud' }));
                       setFailureReason(null);
                     }}
@@ -787,6 +799,20 @@ export function VidLiveTool() {
                   }}
                 />
               </Panel>
+
+              {draft.mode === 'cloud' && (
+                <label className="flex items-start gap-3 rounded-lg border-2 border-ink bg-[#e4f7ff] p-3 text-sm font-bold text-ink shadow-clay-sm">
+                  <input
+                    type="checkbox"
+                    checked={cloudConsentConfirmed}
+                    onChange={(event) => setCloudConsentConfirmed(event.target.checked)}
+                    className="mt-1 h-4 w-4 accent-[#23b7a4]"
+                  />
+                  <span>
+                    云端上传确认：同意上传当前素材，临时文件保留 24 小时，可在任务完成后手动删除。
+                  </span>
+                </label>
+              )}
 
               <button
                 type="button"
