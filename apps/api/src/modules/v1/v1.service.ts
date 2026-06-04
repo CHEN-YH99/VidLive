@@ -55,11 +55,48 @@ interface CompatibilityFeedback {
   notes: string;
 }
 
+interface CheckoutIntent {
+  id: string;
+  userId: string;
+  planId: 'pro-monthly';
+  status: 'requires_payment' | 'paid' | 'cancelled';
+  provider: 'mock-stripe';
+  amountCents: number;
+  currency: 'usd';
+  checkoutUrl: string;
+  createdAt: string;
+}
+
+interface BatchJob {
+  id: string;
+  userId: string;
+  status: 'queued' | 'completed' | 'failed';
+  requestedOutputs: number;
+  outputQuality: 'standard' | '4k';
+  createdAt: string;
+  items: Array<{
+    id: string;
+    fileName: string;
+    status: 'queued' | 'completed' | 'failed';
+  }>;
+}
+
+interface ExperimentAssignment {
+  id: string;
+  visitorId: string;
+  experiment: string;
+  variant: 'control' | 'pro-benefits';
+  createdAt: string;
+}
+
 export class V1Service {
   private readonly users = new Map<string, StoredUser>();
   private readonly usersByEmail = new Map<string, StoredUser>();
   private readonly usageLogs: UsageLog[] = [];
   private readonly feedback: CompatibilityFeedback[] = [];
+  private readonly checkoutIntents = new Map<string, CheckoutIntent>();
+  private readonly batches = new Map<string, BatchJob>();
+  private readonly experiments = new Map<string, ExperimentAssignment>();
 
   constructor(private readonly jwtSecret: string) {}
 
@@ -285,6 +322,174 @@ export class V1Service {
     ];
   }
 
+  getPlans(): Array<{
+    id: 'free' | 'pro-monthly';
+    label: string;
+    priceCents: number;
+    quota: number;
+    features: string[];
+  }> {
+    return [
+      {
+        id: 'free',
+        label: 'Free',
+        priceCents: 0,
+        quota: 5,
+        features: ['本地导出', '标准预设', '基础保存指引'],
+      },
+      {
+        id: 'pro-monthly',
+        label: 'Pro Monthly',
+        priceCents: 900,
+        quota: 100,
+        features: ['云端优先队列', '批量处理', '4K 输出', '历史记录', '高级编辑'],
+      },
+    ];
+  }
+
+  createCheckoutIntent(userId: string): CheckoutIntent {
+    const user = this.requireUser(userId);
+    const intent: CheckoutIntent = {
+      id: randomUUID(),
+      userId: user.id,
+      planId: 'pro-monthly',
+      status: 'requires_payment',
+      provider: 'mock-stripe',
+      amountCents: 900,
+      currency: 'usd',
+      checkoutUrl: `/api/v1/billing/checkout-intents/mock/${user.id}`,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.checkoutIntents.set(intent.id, intent);
+    this.recordUsage(user.id, 'billing.checkout_created', intent);
+
+    return intent;
+  }
+
+  confirmCheckoutIntent(intentId: string): { intent: CheckoutIntent; user: V1UserProfile } {
+    const intent = this.checkoutIntents.get(intentId);
+
+    if (!intent) {
+      throw new V1Error('checkout-not-found', 'Checkout intent was not found.');
+    }
+
+    const user = this.requireUser(intent.userId);
+    intent.status = 'paid';
+    user.planType = 'pro';
+    user.dailyQuota = 100;
+    this.recordUsage(user.id, 'billing.subscription_started', intent);
+
+    return {
+      intent,
+      user: toPublicUser(user),
+    };
+  }
+
+  cancelSubscription(userId: string): V1UserProfile {
+    const user = this.requireUser(userId);
+    user.planType = 'free';
+    user.dailyQuota = 5;
+    this.recordUsage(user.id, 'billing.subscription_cancelled', {});
+
+    return toPublicUser(user);
+  }
+
+  createBatch(input: {
+    userId: string;
+    fileNames: string[];
+    outputQuality: 'standard' | '4k';
+  }): BatchJob {
+    const user = this.requireUser(input.userId);
+
+    if (user.planType !== 'pro') {
+      throw new V1Error('pro-required', 'Batch processing and 4K output require Pro.');
+    }
+
+    if (input.fileNames.length < 2 || input.fileNames.length > 20) {
+      throw new V1Error('invalid-batch-size', 'Batch size must be between 2 and 20 files.');
+    }
+
+    const batch: BatchJob = {
+      id: randomUUID(),
+      userId: user.id,
+      status: 'completed',
+      requestedOutputs: input.fileNames.length,
+      outputQuality: input.outputQuality,
+      createdAt: new Date().toISOString(),
+      items: input.fileNames.map((fileName) => ({
+        id: randomUUID(),
+        fileName,
+        status: 'completed',
+      })),
+    };
+
+    this.batches.set(batch.id, batch);
+    this.recordUsage(user.id, 'batch.created', batch);
+
+    return batch;
+  }
+
+  getBatch(batchId: string): BatchJob | null {
+    return this.batches.get(batchId) ?? null;
+  }
+
+  getHistory(userId: string): { usage: UsageLog[]; batches: BatchJob[]; checkouts: CheckoutIntent[] } {
+    this.requireUser(userId);
+
+    return {
+      usage: this.usageLogs.filter((log) => log.userId === userId).slice(-50).reverse(),
+      batches: [...this.batches.values()].filter((batch) => batch.userId === userId).slice(-20).reverse(),
+      checkouts: [...this.checkoutIntents.values()].filter((intent) => intent.userId === userId).slice(-10).reverse(),
+    };
+  }
+
+  assignExperiment(visitorId: string): ExperimentAssignment {
+    const key = `pro-cta:${visitorId}`;
+    const existing = this.experiments.get(key);
+
+    if (existing) {
+      return existing;
+    }
+
+    const variant = hashVariant(visitorId) % 2 === 0 ? 'control' : 'pro-benefits';
+    const assignment: ExperimentAssignment = {
+      id: randomUUID(),
+      visitorId,
+      experiment: 'pro-cta',
+      variant,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.experiments.set(key, assignment);
+
+    return assignment;
+  }
+
+  getCommercialSummary(): {
+    users: number;
+    proUsers: number;
+    checkoutStarted: number;
+    paidSubscriptions: number;
+    freeToPaidRate: number;
+    batches: number;
+    experiments: number;
+  } {
+    const users = [...this.users.values()];
+    const checkoutStarted = this.checkoutIntents.size;
+    const paidSubscriptions = [...this.checkoutIntents.values()].filter((intent) => intent.status === 'paid').length;
+
+    return {
+      users: users.length,
+      proUsers: users.filter((user) => user.planType === 'pro').length,
+      checkoutStarted,
+      paidSubscriptions,
+      freeToPaidRate: users.length > 0 ? users.filter((user) => user.planType === 'pro').length / users.length : 0,
+      batches: this.batches.size,
+      experiments: this.experiments.size,
+    };
+  }
+
   private signToken(user: StoredUser): string {
     const payload = Buffer.from(
       JSON.stringify({
@@ -304,6 +509,16 @@ export class V1Service {
       timestamp: new Date().toISOString(),
       metadata,
     });
+  }
+
+  private requireUser(userId: string): StoredUser {
+    const user = this.users.get(userId);
+
+    if (!user) {
+      throw new V1Error('user-not-found', 'User was not found.');
+    }
+
+    return user;
   }
 }
 
@@ -350,4 +565,14 @@ function isToday(value: string): boolean {
 
 function roundSeconds(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function hashVariant(value: string): number {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+
+  return hash;
 }

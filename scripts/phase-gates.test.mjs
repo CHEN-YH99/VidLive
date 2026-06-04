@@ -17,9 +17,12 @@ test('phase gates expose the required Phase 0 and Phase 1 checks', async () => {
   assert.ok(ids.has('phase2.cloud-ui'));
   assert.ok(ids.has('phase3.v1-api'));
   assert.ok(ids.has('phase3.basic-editing'));
+  assert.ok(ids.has('phase4.commercial-api'));
+  assert.ok(ids.has('phase4.commercial-ui'));
   assert.ok(ids.has('phase1.manual-evidence'));
   assert.ok(ids.has('phase2.manual-evidence'));
   assert.ok(ids.has('phase3.manual-evidence'));
+  assert.ok(ids.has('phase4.manual-evidence'));
 });
 
 test('phase gate report is stable and summarized', async () => {

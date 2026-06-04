@@ -24,6 +24,23 @@ interface FeedbackBody {
   notes?: string;
 }
 
+interface CheckoutParams {
+  intentId: string;
+}
+
+interface BatchParams {
+  batchId: string;
+}
+
+interface BatchBody {
+  fileNames?: string[];
+  outputQuality?: 'standard' | '4k';
+}
+
+interface ExperimentQuery {
+  visitorId?: string;
+}
+
 export function registerV1Routes(server: FastifyInstance, config: AppConfig): void {
   const service = new V1Service(config.jwtSecret);
 
@@ -140,6 +157,105 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
       status: 'v1-gated',
       checks: service.getLaunchReadiness(),
     };
+  });
+
+  server.get('/api/v1/billing/plans', async () => {
+    return {
+      plans: service.getPlans(),
+      provider: 'mock-stripe',
+      note: 'Use a real Stripe provider before production charging.',
+    };
+  });
+
+  server.post('/api/v1/billing/checkout-intents', async (request, reply) => {
+    const user = authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: 'Bearer token is required.',
+      });
+    }
+
+    return service.createCheckoutIntent(user.id);
+  });
+
+  server.post<{ Params: CheckoutParams }>('/api/v1/billing/checkout-intents/:intentId/confirm', async (request, reply) => {
+    try {
+      return service.confirmCheckoutIntent(request.params.intentId);
+    } catch (error) {
+      return sendV1Error(reply, error);
+    }
+  });
+
+  server.post('/api/v1/billing/subscription/cancel', async (request, reply) => {
+    const user = authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: 'Bearer token is required.',
+      });
+    }
+
+    return {
+      user: service.cancelSubscription(user.id),
+    };
+  });
+
+  server.post<{ Body: BatchBody }>('/api/v1/batches', async (request, reply) => {
+    const user = authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: 'Bearer token is required.',
+      });
+    }
+
+    try {
+      return service.createBatch({
+        userId: user.id,
+        fileNames: request.body.fileNames ?? [],
+        outputQuality: request.body.outputQuality ?? 'standard',
+      });
+    } catch (error) {
+      return sendV1Error(reply, error);
+    }
+  });
+
+  server.get<{ Params: BatchParams }>('/api/v1/batches/:batchId', async (request, reply) => {
+    const batch = service.getBatch(request.params.batchId);
+
+    if (!batch) {
+      return reply.status(404).send({
+        code: 'batch-not-found',
+        message: 'Batch was not found.',
+      });
+    }
+
+    return batch;
+  });
+
+  server.get('/api/v1/history', async (request, reply) => {
+    const user = authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: 'Bearer token is required.',
+      });
+    }
+
+    return service.getHistory(user.id);
+  });
+
+  server.get<{ Querystring: ExperimentQuery }>('/api/v1/experiments/pro-cta', async (request) => {
+    return service.assignExperiment(request.query.visitorId ?? 'anonymous');
+  });
+
+  server.get('/api/v1/admin/commercial-summary', async () => {
+    return service.getCommercialSummary();
   });
 }
 

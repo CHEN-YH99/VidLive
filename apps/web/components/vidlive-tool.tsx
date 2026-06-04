@@ -571,6 +571,21 @@ export function VidLiveTool() {
                 </div>
               </Panel>
 
+              <Panel title="Pro 验证" icon={<BadgeCheck size={18} />}>
+                <div className="grid gap-2">
+                  <div className="rounded-lg border-2 border-ink/15 bg-white p-3">
+                    <p className="text-sm font-black text-ink">Free</p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、本地导出、标准预设。</p>
+                  </div>
+                  <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-3 shadow-clay-sm">
+                    <p className="text-sm font-black text-ink">Pro Monthly</p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
+                      批量处理、4K 输出、云端优先队列、历史记录。
+                    </p>
+                  </div>
+                </div>
+              </Panel>
+
               <Panel title="导出预设" icon={<Download size={18} />}>
                 <div className="grid gap-2">
                   {(Object.keys(exportPresets) as ExportPresetId[]).map((presetId) => (

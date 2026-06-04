@@ -122,6 +122,23 @@ export async function collectPhaseGates(options = {}) {
     'NumberRangeField',
   ]));
 
+  gates.push(staticGate('phase4.commercial-api', 'Phase 4 商业化 API', 'Phase 4', v1Routes + v1Service, [
+    '/api/v1/billing/plans',
+    '/api/v1/billing/checkout-intents',
+    '/api/v1/batches',
+    '/api/v1/history',
+    '/api/v1/experiments/pro-cta',
+    '/api/v1/admin/commercial-summary',
+    'getCommercialSummary',
+  ]));
+
+  gates.push(staticGate('phase4.commercial-ui', 'Phase 4 商业化入口 UI', 'Phase 4', webTool, [
+    'Pro Monthly',
+    '批量处理',
+    '4K 输出',
+    '历史记录',
+  ]));
+
   const phase0Record = await readOptional(root, 'Phase0技术兼容验证记录.md');
   const phase0ManualPassed = hasManualPassMarker(phase0Record, 'Phase 0 手动验收状态');
   gates.push({
@@ -168,6 +185,18 @@ export async function collectPhaseGates(options = {}) {
     detail: phase3ManualPassed
       ? 'Phase 3 V1.0 手动验收记录已标记通过。'
       : '请补账号、配额、AI、基础编辑、兼容反馈、监控和上线准备证据后再标记通过。',
+  });
+
+  const phase4Record = await readOptional(root, 'Phase4商业化验收记录.md');
+  const phase4ManualPassed = hasManualPassMarker(phase4Record, '商业化手动验收状态');
+  gates.push({
+    id: 'phase4.manual-evidence',
+    phase: 'Phase 4',
+    title: '商业化验证证据',
+    status: phase4ManualPassed ? 'pass' : 'blocked',
+    detail: phase4ManualPassed
+      ? 'Phase 4 商业化手动验收记录已标记通过。'
+      : '请补支付、退款/取消、批量失败隔离、成本和免费转付费指标后再标记通过。',
   });
 
   return gates;
