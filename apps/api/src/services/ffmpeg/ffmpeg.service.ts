@@ -31,6 +31,14 @@ export interface ClipOptions {
   };
 }
 
+export interface WebpOptions {
+  inputPath: string;
+  outputPath: string;
+  startSeconds: number;
+  durationSeconds: number;
+  edit?: ClipOptions['edit'];
+}
+
 export interface FrameOptions {
   inputPath: string;
   outputPath: string;
@@ -123,6 +131,43 @@ export class FfmpegService {
     }
 
     args.push(options.outputPath);
+
+    await execFileAsync('ffmpeg', args, {
+      maxBuffer: 10 * 1024 * 1024,
+    });
+
+    return options.outputPath;
+  }
+
+  async clipToWebp(options: WebpOptions): Promise<string> {
+    await mkdir(path.dirname(options.outputPath), { recursive: true });
+
+    const args = [
+      '-y',
+      '-ss',
+      options.startSeconds.toString(),
+      '-i',
+      options.inputPath,
+      '-t',
+      options.durationSeconds.toString(),
+      '-map',
+      '0:v:0',
+    ];
+    const videoFilters = [...createVideoFilters(options.edit), 'fps=15'];
+
+    args.push(
+      '-vf',
+      videoFilters.join(','),
+      '-loop',
+      '0',
+      '-c:v',
+      'libwebp',
+      '-quality',
+      '82',
+      '-preset',
+      'picture',
+      options.outputPath,
+    );
 
     await execFileAsync('ffmpeg', args, {
       maxBuffer: 10 * 1024 * 1024,

@@ -117,7 +117,7 @@ const p0Definitions = [
       {
         title: '标准和锁屏预设定义已覆盖',
         sources: ['shared'],
-        snippets: ["'standard-live-photo'", "'ios-lock-screen'", "outputs: ['zip', 'mov', 'jpeg', 'mp4']"],
+        snippets: ["'standard-live-photo'", "'ios-lock-screen'", "outputs: ['zip', 'mov', 'jpeg', 'mp4'", "'webp'"],
       },
       {
         title: '预设选择 UI 已覆盖',

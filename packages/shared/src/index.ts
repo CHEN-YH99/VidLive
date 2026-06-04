@@ -41,7 +41,7 @@ export interface ExportPreset {
   defaultDurationSeconds: number;
   preferredAspectRatio: AspectRatioId;
   preferredFps?: number;
-  outputs: Array<'zip' | 'mov' | 'jpeg' | 'mp4' | 'gif'>;
+  outputs: Array<'zip' | 'mov' | 'jpeg' | 'mp4' | 'gif' | 'webp'>;
 }
 
 export const exportPresets: Record<ExportPresetId, ExportPreset> = {
@@ -51,7 +51,7 @@ export const exportPresets: Record<ExportPresetId, ExportPreset> = {
     target: '相册保存和后续导入',
     defaultDurationSeconds: 3,
     preferredAspectRatio: 'source',
-    outputs: ['zip', 'mov', 'jpeg', 'mp4'],
+    outputs: ['zip', 'mov', 'jpeg', 'mp4', 'webp'],
   },
   'ios-lock-screen': {
     id: 'ios-lock-screen',
@@ -60,7 +60,7 @@ export const exportPresets: Record<ExportPresetId, ExportPreset> = {
     defaultDurationSeconds: 2,
     preferredAspectRatio: '9:16',
     preferredFps: 60,
-    outputs: ['zip', 'mov', 'jpeg', 'mp4'],
+    outputs: ['zip', 'mov', 'jpeg', 'mp4', 'webp'],
   },
   'social-fallback': {
     id: 'social-fallback',
@@ -68,7 +68,7 @@ export const exportPresets: Record<ExportPresetId, ExportPreset> = {
     target: '聊天和社交平台分享',
     defaultDurationSeconds: 3,
     preferredAspectRatio: 'source',
-    outputs: ['mp4', 'gif'],
+    outputs: ['mp4', 'gif', 'webp'],
   },
 };
 

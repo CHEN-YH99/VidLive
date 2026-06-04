@@ -16,6 +16,7 @@ export interface LivePhotoGenerateInput {
 export interface LivePhotoGenerateResult {
   photoPath: string;
   movPath: string;
+  webpPath: string;
   zipPath: string;
   manifestPath: string;
   readmePath: string;
@@ -40,6 +41,7 @@ export class LivePhotoService {
     const keyframeSeconds = clampNumber(input.draft.keyframeSeconds, startSeconds, startSeconds + durationSeconds);
     const photoPath = path.join(input.workDir, 'photo.jpg');
     const movPath = path.join(input.workDir, 'video.mov');
+    const webpPath = path.join(input.workDir, 'animated.webp');
     const manifestPath = path.join(input.workDir, 'manifest.json');
     const readmePath = path.join(input.workDir, 'README.txt');
     const zipPath = path.join(input.workDir, 'vidlive-phase0-livephoto-poc.zip');
@@ -55,6 +57,13 @@ export class LivePhotoService {
       startSeconds,
       durationSeconds,
       muted: input.draft.muted,
+      edit: input.draft,
+    });
+    await this.ffmpeg.clipToWebp({
+      inputPath: input.sourcePath,
+      outputPath: webpPath,
+      startSeconds,
+      durationSeconds,
       edit: input.draft,
     });
 
@@ -83,6 +92,7 @@ export class LivePhotoService {
           artifacts: {
             photo: 'photo.jpg',
             video: 'video.mov',
+            webp: 'animated.webp',
             readme: 'README.txt',
           },
           warnings,
@@ -101,6 +111,7 @@ export class LivePhotoService {
       [
         { sourcePath: photoPath, entryName: 'photo.jpg' },
         { sourcePath: movPath, entryName: 'video.mov' },
+        { sourcePath: webpPath, entryName: 'animated.webp' },
         { sourcePath: manifestPath, entryName: 'manifest.json' },
         { sourcePath: readmePath, entryName: 'README.txt' },
       ],
@@ -110,6 +121,7 @@ export class LivePhotoService {
     return {
       photoPath,
       movPath,
+      webpPath,
       zipPath,
       manifestPath,
       readmePath,
@@ -177,6 +189,7 @@ function createReadme(contentId: string, warnings: string[]): string {
     'Artifacts:',
     '- photo.jpg: extracted key frame',
     '- video.mov: H.264 MOV clip',
+    '- animated.webp: WebP fallback export',
     '- manifest.json: generation parameters and probe result',
     '',
     'Manual verification:',

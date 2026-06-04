@@ -8,7 +8,7 @@ import {
 } from '@vidlive/shared';
 import { captureCoverFrame } from '@/lib/file-inspector';
 
-export type ArtifactKind = 'package' | 'cover' | 'clip' | 'manifest' | 'source';
+export type ArtifactKind = 'package' | 'cover' | 'clip' | 'webp' | 'manifest' | 'source';
 
 export interface LocalExportArtifact {
   id: string;
@@ -79,6 +79,21 @@ export async function generateLocalExport(
         mimeType: coverBlob.type,
         blob: coverBlob,
       });
+      const webpBlob = await createWebpFrameBlob(coverFrame);
+
+      if (webpBlob) {
+        artifacts.push({
+          id: 'webp-preview',
+          kind: 'webp',
+          label: 'WebP 预览',
+          description: 'P2 WebP 导出产物，用于网页和社交场景预览。',
+          fileName: `${baseName}-preview.webp`,
+          mimeType: webpBlob.type,
+          blob: webpBlob,
+        });
+      } else {
+        warnings.push('当前浏览器未能生成 WebP 预览，云端处理可作为兜底。');
+      }
     } else {
       warnings.push('未能抓取关键帧，导出包会缺少静态封面。');
     }
@@ -241,6 +256,35 @@ function createJsonBlob(value: unknown): Blob {
 
 function createTextBlob(value: string): Blob {
   return new Blob([value], { type: 'text/plain;charset=utf-8' });
+}
+
+async function createWebpFrameBlob(dataUrl: string): Promise<Blob | null> {
+  const image = new Image();
+  image.decoding = 'async';
+  image.src = dataUrl;
+
+  await waitForEvent(image, 'load');
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    return null;
+  }
+
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+  context.drawImage(image, 0, 0);
+
+  return new Promise((resolve) => {
+    canvas.toBlob(
+      (blob) => {
+        resolve(blob && blob.type === 'image/webp' ? blob : null);
+      },
+      'image/webp',
+      0.86,
+    );
+  });
 }
 
 function createReadmeText(draft: ConversionDraft, warnings: string[]): string {

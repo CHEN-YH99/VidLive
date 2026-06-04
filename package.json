@@ -28,6 +28,8 @@
     "p0:check:strict": "node scripts/p0-check.mjs --strict",
     "p1:check": "node scripts/p1-check.mjs",
     "p1:check:strict": "node scripts/p1-check.mjs --strict",
+    "p2:check": "node scripts/p2-check.mjs",
+    "p2:check:strict": "node scripts/p2-check.mjs --strict",
     "smoke:phase2": "node scripts/phase2-smoke.mjs",
     "smoke:phase3": "node scripts/phase3-smoke.mjs",
     "smoke:phase4": "node scripts/phase4-smoke.mjs",
