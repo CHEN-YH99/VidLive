@@ -9,6 +9,10 @@
     "dev:api": "pnpm --filter @vidlive/shared run build && pnpm --filter @vidlive/api run dev",
     "build": "pnpm -r run build",
     "types": "pnpm -r run types",
+    "test": "node --test scripts/*.test.mjs",
+    "phase:check": "node scripts/phase-gates.mjs",
+    "phase:check:strict": "node scripts/phase-gates.mjs --strict",
+    "smoke:phase2": "node scripts/phase2-smoke.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

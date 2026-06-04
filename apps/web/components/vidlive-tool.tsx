@@ -61,6 +61,28 @@ const phaseSteps = [
   { label: '导出', icon: <Download size={15} /> },
 ];
 
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
+
+type CloudJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
+
+interface CloudJob {
+  id: string;
+  status: CloudJobStatus;
+  progress: number;
+  expiresAt: string;
+  artifact: {
+    fileName: string;
+    sizeBytes: number;
+    downloadUrl: string;
+    deleteUrl: string;
+  } | null;
+  warnings: string[];
+  error: {
+    code: string;
+    message: string;
+  } | null;
+}
+
 function isGif(file: File): boolean {
   return file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
 }
@@ -112,6 +134,32 @@ function getFailureFromExportError(error: unknown): FailureReason {
   return 'local-transcode-failed';
 }
 
+function isCloudJobActive(job: CloudJob | null): boolean {
+  return job?.status === 'queued' || job?.status === 'processing';
+}
+
+function toApiUrl(value: string): string {
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return value;
+  }
+
+  return `${apiBaseUrl}${value}`;
+}
+
+function createCloudQuery(draft: ConversionDraft): string {
+  const query = new URLSearchParams({
+    presetId: draft.presetId,
+    aspectRatioId: draft.aspectRatioId,
+    fitMode: draft.fitMode,
+    startSeconds: draft.startSeconds.toString(),
+    endSeconds: draft.endSeconds.toString(),
+    keyframeSeconds: draft.keyframeSeconds.toString(),
+    muted: draft.muted ? 'true' : 'false',
+  });
+
+  return query.toString();
+}
+
 export function VidLiveTool() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -123,6 +171,28 @@ export function VidLiveTool() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [exportResult, setExportResult] = useState<LocalExportResult | null>(null);
+  const [cloudJob, setCloudJob] = useState<CloudJob | null>(null);
+
+  const refreshCloudJob = useCallback(async (jobId: string) => {
+    const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs/${jobId}`));
+
+    if (!response.ok) {
+      setFailureReason(response.status === 404 ? 'expired-link' : 'cloud-timeout');
+      return;
+    }
+
+    const nextJob = (await response.json()) as CloudJob;
+    setCloudJob(nextJob);
+    setGenerationProgress(nextJob.progress);
+
+    if (nextJob.status === 'failed') {
+      setFailureReason('cloud-timeout');
+    }
+
+    if (nextJob.status === 'expired') {
+      setFailureReason('expired-link');
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -131,6 +201,21 @@ export function VidLiveTool() {
       }
     };
   }, [previewUrl]);
+
+  useEffect(() => {
+    if (!cloudJob || !isCloudJobActive(cloudJob)) {
+      return;
+    }
+
+    const jobId = cloudJob.id;
+    const timer = window.setInterval(() => {
+      void refreshCloudJob(jobId);
+    }, 1_500);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [cloudJob, refreshCloudJob]);
 
   useEffect(() => {
     if (!previewUrl || !file || isGif(file)) {
@@ -180,6 +265,7 @@ export function VidLiveTool() {
       setFailureReason(null);
       setCoverUrl(null);
       setExportResult(null);
+      setCloudJob(null);
       setGenerationProgress(0);
 
       const objectUrl = URL.createObjectURL(selectedFile);
@@ -227,16 +313,19 @@ export function VidLiveTool() {
   const durationMax = metadata?.durationSeconds ?? Math.max(draft.endSeconds, selectedPreset.defaultDurationSeconds);
   const currentFailure = failureReason ? failureAdvice[failureReason] : null;
   const clipDuration = Math.max(0, draft.endSeconds - draft.startSeconds);
-  const canGenerate = Boolean(file && previewUrl && metadata && !isReading && !isGenerating);
+  const cloudBusy = isCloudJobActive(cloudJob);
+  const canGenerate = Boolean(file && previewUrl && metadata && !isReading && !isGenerating && !cloudBusy);
   const packageArtifact = exportResult?.artifacts.find((artifact) => artifact.kind === 'package') ?? null;
 
   const updatePreset = (presetId: ExportPresetId) => {
     setExportResult(null);
+    setCloudJob(null);
     setDraft((current) => getDefaultDraftForPreset(presetId, current, metadata));
   };
 
   const updateStart = (value: number) => {
     setExportResult(null);
+    setCloudJob(null);
     setDraft((current) => {
       const nextStart = clamp(value, 0, Math.max(0, current.endSeconds - productLimits.minDurationSeconds));
       const nextKeyframe = clamp(current.keyframeSeconds, nextStart, current.endSeconds);
@@ -251,6 +340,7 @@ export function VidLiveTool() {
 
   const updateEnd = (value: number) => {
     setExportResult(null);
+    setCloudJob(null);
     setDraft((current) => {
       const nextEnd = clamp(value, current.startSeconds + productLimits.minDurationSeconds, durationMax);
       const nextKeyframe = clamp(current.keyframeSeconds, current.startSeconds, nextEnd);
@@ -265,6 +355,7 @@ export function VidLiveTool() {
 
   const updateKeyframe = (value: number) => {
     setExportResult(null);
+    setCloudJob(null);
     setDraft((current) => ({
       ...current,
       keyframeSeconds: clamp(value, current.startSeconds, current.endSeconds),
@@ -279,10 +370,31 @@ export function VidLiveTool() {
 
     setFailureReason(null);
     setExportResult(null);
+    setCloudJob(null);
     setIsGenerating(true);
-    setGenerationProgress(18);
+    setGenerationProgress(draft.mode === 'cloud' ? 8 : 18);
 
     try {
+      if (draft.mode === 'cloud') {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs?${createCloudQuery(draft)}`), {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          setFailureReason(response.status === 413 ? 'file-too-large' : 'cloud-timeout');
+          return;
+        }
+
+        const nextJob = (await response.json()) as CloudJob;
+        setCloudJob(nextJob);
+        setGenerationProgress(nextJob.progress);
+        return;
+      }
+
       setGenerationProgress(42);
       const result = await generateLocalExport(file, previewUrl, draft, metadata);
       setGenerationProgress(100);
@@ -368,7 +480,9 @@ export function VidLiveTool() {
                     description="不上传素材"
                     onClick={() => {
                       setExportResult(null);
+                      setCloudJob(null);
                       setDraft((current) => ({ ...current, mode: 'local' }));
+                      setFailureReason(null);
                     }}
                   />
                   <ModeButton
@@ -377,8 +491,9 @@ export function VidLiveTool() {
                     description="Beta 兜底"
                     onClick={() => {
                       setExportResult(null);
+                      setCloudJob(null);
                       setDraft((current) => ({ ...current, mode: 'cloud' }));
-                      setFailureReason('cloud-required');
+                      setFailureReason(null);
                     }}
                   />
                 </div>
@@ -435,6 +550,7 @@ export function VidLiveTool() {
                       type="button"
                       onClick={() => {
                         setExportResult(null);
+                        setCloudJob(null);
                         setDraft((current) => ({ ...current, aspectRatioId: ratio.id }));
                       }}
                       className={[
@@ -454,6 +570,7 @@ export function VidLiveTool() {
                     label="裁切填满"
                     onClick={() => {
                       setExportResult(null);
+                      setCloudJob(null);
                       setDraft((current) => ({ ...current, fitMode: 'cover' as FitMode }));
                     }}
                   />
@@ -462,6 +579,7 @@ export function VidLiveTool() {
                     label="补背景"
                     onClick={() => {
                       setExportResult(null);
+                      setCloudJob(null);
                       setDraft((current) => ({ ...current, fitMode: 'contain' as FitMode }));
                     }}
                   />
@@ -470,6 +588,7 @@ export function VidLiveTool() {
                   type="button"
                   onClick={() => {
                     setExportResult(null);
+                    setCloudJob(null);
                     setDraft((current) => ({ ...current, muted: !current.muted }));
                   }}
                   className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border-2 border-ink/15 bg-white text-sm font-black text-ink transition hover:border-ink"
@@ -483,14 +602,39 @@ export function VidLiveTool() {
                 type="button"
                 disabled={!canGenerate}
                 onClick={handleGenerate}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+                className="sticky bottom-3 z-20 inline-flex h-12 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40 lg:static"
               >
                 {isGenerating ? <Loader2 size={17} className="animate-spin" /> : <Download size={17} />}
-                {isGenerating ? '正在生成' : '生成文件'}
+                {isGenerating
+                  ? draft.mode === 'cloud'
+                    ? '提交任务'
+                    : '正在生成'
+                  : draft.mode === 'cloud'
+                    ? '提交云端任务'
+                    : '生成文件'}
               </button>
 
-              {(isGenerating || generationProgress > 0) && (
-                <ProgressBar value={generationProgress} label={isGenerating ? '本地打包中' : '生成完成'} />
+              {(isGenerating || generationProgress > 0 || cloudBusy) && (
+                <ProgressBar
+                  value={generationProgress}
+                  label={draft.mode === 'cloud' || cloudJob ? '云端任务处理中' : isGenerating ? '本地打包中' : '生成完成'}
+                />
+              )}
+
+              {cloudJob && (
+                <CloudJobPanel
+                  job={cloudJob}
+                  onDownload={(url) => {
+                    window.location.assign(toApiUrl(url));
+                  }}
+                  onDelete={async () => {
+                    await fetch(toApiUrl(`/api/conversions/cloud-jobs/${cloudJob.id}`), {
+                      method: 'DELETE',
+                    });
+                    setCloudJob(null);
+                    setGenerationProgress(0);
+                  }}
+                />
               )}
 
               {exportResult && packageArtifact && (
@@ -560,7 +704,7 @@ function UploadPanel({
           </button>
           <div className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#e4f7ff] px-4 text-sm font-black text-ink shadow-clay-sm">
             <ShieldCheck size={17} />
-            {isReading ? '读取素材中' : '素材不离开浏览器'}
+            {isReading ? '读取素材中' : draft.mode === 'cloud' ? '云端保留 24 小时' : '素材不离开浏览器'}
           </div>
         </div>
       </div>
@@ -725,6 +869,87 @@ function ExportResultPanel({
               <span className="mt-1 block text-xs font-semibold leading-5 text-ink/60">{artifact.description}</span>
             </button>
           ))}
+      </div>
+    </Panel>
+  );
+}
+
+function CloudJobPanel({
+  job,
+  onDownload,
+  onDelete,
+}: {
+  job: CloudJob;
+  onDownload: (url: string) => void;
+  onDelete: () => Promise<void>;
+}) {
+  const statusCopy: Record<CloudJobStatus, string> = {
+    queued: '排队中',
+    processing: '处理中',
+    completed: '已完成',
+    failed: '处理失败',
+    expired: '已过期',
+    deleted: '已删除',
+  };
+  const canDownload = job.status === 'completed' && job.artifact;
+
+  return (
+    <Panel title="云端任务" icon={<CloudOff size={18} />}>
+      <div className="rounded-lg border-2 border-ink bg-[#e4f7ff] p-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-black text-ink">{statusCopy[job.status]}</p>
+          <span className="rounded-lg border border-ink/15 bg-white px-2 py-1 text-xs font-black text-ink/65">
+            {job.progress}%
+          </span>
+        </div>
+        <p className="mt-2 break-all text-xs font-semibold leading-5 text-ink/60">任务 ID：{job.id}</p>
+        <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">
+          过期时间：{new Date(job.expiresAt).toLocaleString('zh-CN')}
+        </p>
+      </div>
+
+      {job.error && (
+        <div className="mt-3 rounded-lg border-2 border-ink bg-[#ffe2dc] p-3">
+          <p className="text-xs font-black text-ink">{job.error.code}</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">{job.error.message}</p>
+        </div>
+      )}
+
+      {job.warnings.length > 0 && (
+        <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#fff4df] p-3">
+          <p className="text-xs font-black text-ink">兼容提示</p>
+          <ul className="mt-2 grid gap-1 text-xs font-semibold leading-5 text-ink/65">
+            {job.warnings.map((warning) => (
+              <li key={warning}>- {warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          disabled={!canDownload}
+          onClick={() => {
+            if (job.artifact) {
+              onDownload(job.artifact.downloadUrl);
+            }
+          }}
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-3 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+        >
+          <FileArchive size={16} />
+          下载
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void onDelete();
+          }}
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-white px-3 text-sm font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+        >
+          <CloudOff size={16} />
+          删除
+        </button>
       </div>
     </Panel>
   );

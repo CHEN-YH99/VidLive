@@ -9,6 +9,7 @@ export interface AppConfig {
   uploadDir: string;
   localFileSizeBytes: number;
   cloudFileSizeBytes: number;
+  cloudRetentionHours: number;
 }
 
 function readNumber(name: string, fallback: number): number {
@@ -36,5 +37,6 @@ export function loadConfig(): AppConfig {
     uploadDir: process.env.UPLOAD_DIR ?? './uploads',
     localFileSizeBytes: readNumber('MAX_LOCAL_FILE_SIZE', productLimits.localFileSizeBytes),
     cloudFileSizeBytes: readNumber('MAX_CLOUD_FILE_SIZE', productLimits.cloudFileSizeBytes),
+    cloudRetentionHours: readNumber('CLOUD_RETENTION_HOURS', 24),
   };
 }

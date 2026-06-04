@@ -110,6 +110,10 @@ curl -F "file=@sample.mp4" "http://127.0.0.1:3001/api/phase0/live-photo-poc?pres
 
 ## 5. Phase 0 退出标准
 
+> **Phase 0 手动验收状态**：待执行
+>
+> 自动化和静态检查入口已补齐：运行 `pnpm run phase:check` 查看当前 Phase Gate；运行 `pnpm run phase:check:strict` 可作为严格验收门。严格模式会在 `exiftool`、真机保存、锁屏播放或抓包证据缺失时失败。别把“能生成 ZIP”当成“iPhone 已认”，这个坑不小，踩下去脚都拔不出来。
+
 | 退出标准 | 当前状态 | 说明 |
 | --- | --- | --- |
 | Live Photo POC 包可生成 | 已完成 | 后端 API 可生成 JPEG/MOV/ZIP。 |
@@ -152,6 +156,18 @@ curl -F "file=@sample.mp4" "http://127.0.0.1:3001/api/phase0/live-photo-poc?pres
 4. 使用至少 3 台 iPhone 做保存和锁屏测试。
 5. 把结果补入本文件的真机验证矩阵。
 6. 根据真机结果更新 `技术实现文档.md` 的 Live Photo 元数据和保存路径方案。
+
+### 7.1 自动化补齐项
+
+| 命令 | 用途 | 通过口径 |
+| --- | --- | --- |
+| `pnpm run test` | 运行 Node 内置测试，确认 Phase Gate 检查项稳定存在。 | 测试通过。 |
+| `pnpm run phase:check` | 输出 Phase 0/Phase 1 当前完成状态。 | 可看到 PASS/WARN/BLOCKED 明细。 |
+| `pnpm run phase:check:strict` | 严格验收门。 | 所有 Phase Gate 均为 PASS 才通过。 |
+
+### 7.2 exiftool 兜底路径
+
+`apps/api/Dockerfile` 已包含 `perl-image-exiftool`，如果本机暂时不装 `exiftool`，可以用 API 容器环境做元数据注入验证。注意：容器里能跑不等于真机已通过，最终仍要把 iPhone 相册识别和锁屏播放结果写回上面的矩阵。
 
 ---
 
