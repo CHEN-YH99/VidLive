@@ -319,6 +319,17 @@ export const compatibilityRows: CompatibilityRow[] = [
     lockScreenReady: 'pending',
     note: '重点检查兼容性和下载提示。',
   },
+  {
+    id: 'ios17-device',
+    environment: 'iOS 17+ 真机',
+    priority: 'P0',
+    importReady: 'pending',
+    trimReady: 'pending',
+    exportReady: 'pending',
+    saveReady: 'pending',
+    lockScreenReady: 'pending',
+    note: '重点验证标准 Live Photo 识别和锁屏播放。',
+  },
 ];
 
 export const phaseZeroExitCriteria: ExitCriterion[] = [
