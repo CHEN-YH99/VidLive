@@ -20,6 +20,8 @@
     "compatibility-matrix:check:strict": "node scripts/compatibility-matrix-check.mjs --strict",
     "privacy:check": "node scripts/privacy-check.mjs",
     "privacy:check:strict": "node scripts/privacy-check.mjs --strict",
+    "performance:check": "node scripts/performance-check.mjs",
+    "performance:check:strict": "node scripts/performance-check.mjs --strict",
     "smoke:phase2": "node scripts/phase2-smoke.mjs",
     "smoke:phase3": "node scripts/phase3-smoke.mjs",
     "smoke:phase4": "node scripts/phase4-smoke.mjs",
