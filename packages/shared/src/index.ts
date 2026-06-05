@@ -2,6 +2,7 @@ export const productLimits = {
   localFileSizeBytes: 100 * 1024 * 1024,
   cloudFileSizeBytes: 500 * 1024 * 1024,
   minDurationSeconds: 1,
+  livePhotoMaxDurationSeconds: 3,
   recommendedMaxDurationSeconds: 30,
   localTargetDurationSeconds: 10,
 } as const;
@@ -39,6 +40,7 @@ export interface ExportPreset {
   label: string;
   target: string;
   defaultDurationSeconds: number;
+  maxDurationSeconds: number;
   preferredAspectRatio: AspectRatioId;
   preferredFps?: number;
   outputs: Array<'zip' | 'mov' | 'jpeg' | 'mp4' | 'gif' | 'webp'>;
@@ -48,16 +50,18 @@ export const exportPresets: Record<ExportPresetId, ExportPreset> = {
   'standard-live-photo': {
     id: 'standard-live-photo',
     label: '标准 Live Photo 素材包',
-    target: '导出素材包，待相册或云端导入验证',
+    target: '标准实况片段，最长 3 秒',
     defaultDurationSeconds: 3,
+    maxDurationSeconds: productLimits.livePhotoMaxDurationSeconds,
     preferredAspectRatio: 'source',
     outputs: ['zip', 'mov', 'jpeg', 'mp4', 'webp'],
   },
   'ios-lock-screen': {
     id: 'ios-lock-screen',
     label: 'iOS 锁屏素材包',
-    target: 'iOS 17+ 锁屏播放待真机验证',
+    target: '锁屏默认 2 秒，最长 3 秒',
     defaultDurationSeconds: 2,
+    maxDurationSeconds: productLimits.livePhotoMaxDurationSeconds,
     preferredAspectRatio: '9:16',
     preferredFps: 60,
     outputs: ['zip', 'mov', 'jpeg', 'mp4', 'webp'],
@@ -65,8 +69,9 @@ export const exportPresets: Record<ExportPresetId, ExportPreset> = {
   'social-fallback': {
     id: 'social-fallback',
     label: '社交兜底',
-    target: '聊天和社交平台分享',
+    target: '兼容实况导出，最长 3 秒',
     defaultDurationSeconds: 3,
+    maxDurationSeconds: productLimits.livePhotoMaxDurationSeconds,
     preferredAspectRatio: 'source',
     outputs: ['mp4', 'gif', 'webp'],
   },

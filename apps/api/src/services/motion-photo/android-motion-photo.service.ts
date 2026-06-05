@@ -26,16 +26,20 @@ export class AndroidMotionPhotoService {
     const videoLengthBytes = videoStat.size;
     const xmpPath = path.join(path.dirname(input.outputPath), 'motion-photo.xmp');
     const basePhotoPath = path.join(path.dirname(input.outputPath), 'motion-photo-base.jpg');
+    const xmp = createMotionPhotoXmp({
+      presentationTimestampUs: input.presentationTimestampUs,
+      videoLengthBytes,
+    });
 
     await copyFile(input.photoPath, basePhotoPath);
-    await writeFile(
-      xmpPath,
-      createMotionPhotoXmp({
-        presentationTimestampUs: input.presentationTimestampUs,
-        videoLengthBytes,
-      }),
-    );
-    await execFileAsync('exiftool', ['-overwrite_original', `-XMP<=${xmpPath}`, basePhotoPath]);
+    await writeFile(xmpPath, xmp);
+
+    try {
+      await execFileAsync('exiftool', ['-overwrite_original', `-XMP<=${xmpPath}`, basePhotoPath]);
+    } catch {
+      const sourcePhoto = await readFile(input.photoPath);
+      await writeFile(basePhotoPath, injectXmpIntoJpeg(sourcePhoto, xmp));
+    }
 
     const [photoBuffer, videoBuffer] = await Promise.all([readFile(basePhotoPath), readFile(input.videoPath)]);
 
@@ -47,6 +51,60 @@ export class AndroidMotionPhotoService {
       xmpInjected: true,
     };
   }
+}
+
+function injectXmpIntoJpeg(jpegBuffer: Buffer, xmp: string): Buffer {
+  if (jpegBuffer.length < 4 || jpegBuffer[0] !== 0xff || jpegBuffer[1] !== 0xd8) {
+    throw new Error('motion-photo-xmp-injection-requires-jpeg');
+  }
+
+  const xmpHeader = Buffer.from('http://ns.adobe.com/xap/1.0/\0', 'utf8');
+  const xmpPayload = Buffer.concat([xmpHeader, Buffer.from(xmp, 'utf8')]);
+  const segmentLength = xmpPayload.length + 2;
+
+  if (segmentLength > 0xffff) {
+    throw new Error('motion-photo-xmp-too-large');
+  }
+
+  const app1Marker = Buffer.alloc(4);
+  app1Marker[0] = 0xff;
+  app1Marker[1] = 0xe1;
+  app1Marker.writeUInt16BE(segmentLength, 2);
+
+  const insertOffset = findJpegMetadataInsertOffset(jpegBuffer);
+
+  return Buffer.concat([
+    jpegBuffer.subarray(0, insertOffset),
+    app1Marker,
+    xmpPayload,
+    jpegBuffer.subarray(insertOffset),
+  ]);
+}
+
+function findJpegMetadataInsertOffset(jpegBuffer: Buffer): number {
+  let offset = 2;
+
+  while (offset + 4 < jpegBuffer.length && jpegBuffer[offset] === 0xff) {
+    const marker = jpegBuffer[offset + 1];
+
+    if (typeof marker !== 'number') {
+      break;
+    }
+
+    if (marker < 0xe0 || marker > 0xef) {
+      break;
+    }
+
+    const segmentLength = jpegBuffer.readUInt16BE(offset + 2);
+
+    if (segmentLength < 2) {
+      break;
+    }
+
+    offset += 2 + segmentLength;
+  }
+
+  return offset;
 }
 
 function createMotionPhotoXmp(input: { presentationTimestampUs: number; videoLengthBytes: number }): string {

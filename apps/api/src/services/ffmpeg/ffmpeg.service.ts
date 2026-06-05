@@ -140,7 +140,65 @@ export class FfmpegService {
   }
 
   async clipToMp4(options: ClipOptions): Promise<string> {
-    return this.clipToMov(options);
+    await mkdir(path.dirname(options.outputPath), { recursive: true });
+
+    const args = [
+      '-y',
+      '-ss',
+      options.startSeconds.toString(),
+      '-i',
+      options.inputPath,
+      '-t',
+      options.durationSeconds.toString(),
+      '-map',
+      '0:v:0',
+    ];
+    const videoFilters = [
+      ...createVideoFilters(options.edit),
+      'fps=30',
+      'scale=w=min(1920\\,iw):h=min(1920\\,ih):force_original_aspect_ratio=decrease',
+      'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+      'setsar=1',
+    ];
+
+    args.push(
+      '-vf',
+      videoFilters.join(','),
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-profile:v',
+      'baseline',
+      '-level',
+      '4.1',
+      '-bf',
+      '0',
+      '-preset',
+      'fast',
+      '-crf',
+      '24',
+      '-maxrate',
+      '6M',
+      '-bufsize',
+      '12M',
+      '-movflags',
+      '+faststart',
+    );
+
+    if (options.muted) {
+      args.push('-an');
+    } else {
+      args.push('-map', '0:a?', '-c:a', 'aac', '-b:a', '128k', '-ar', '44100');
+    }
+
+    args.push(options.outputPath);
+
+    await execFileAsync('ffmpeg', args, {
+      maxBuffer: 10 * 1024 * 1024,
+    });
+
+    return options.outputPath;
   }
 
   async clipToWebp(options: WebpOptions): Promise<string> {

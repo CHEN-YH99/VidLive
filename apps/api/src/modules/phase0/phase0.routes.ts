@@ -168,9 +168,18 @@ async function checkCommand(name: string, args: string[]): Promise<CommandStatus
 function createDraftFromQuery(query: PhaseZeroPocQuery): ConversionDraft {
   const presetId = query.presetId && query.presetId in exportPresets ? query.presetId : 'standard-live-photo';
   const preset = exportPresets[presetId];
-  const startSeconds = readNumber(query.startSeconds, 0);
-  const endSeconds = readNumber(query.endSeconds, startSeconds + preset.defaultDurationSeconds);
-  const keyframeSeconds = readNumber(query.keyframeSeconds, startSeconds + (endSeconds - startSeconds) / 2);
+  const startSeconds = Math.max(0, readNumber(query.startSeconds, 0));
+  const maxEndSeconds = startSeconds + preset.maxDurationSeconds;
+  const endSeconds = clampNumber(
+    readNumber(query.endSeconds, startSeconds + preset.defaultDurationSeconds),
+    startSeconds + productLimits.minDurationSeconds,
+    maxEndSeconds,
+  );
+  const keyframeSeconds = clampNumber(
+    readNumber(query.keyframeSeconds, startSeconds + (endSeconds - startSeconds) / 2),
+    startSeconds,
+    endSeconds,
+  );
 
   return {
     mode: 'cloud',
@@ -195,6 +204,10 @@ function readRotation(value: string | undefined): 0 | 90 | 180 | 270 {
   const parsed = Number(value);
 
   return parsed === 90 || parsed === 180 || parsed === 270 ? parsed : 0;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
 function readNumber(value: string | undefined, fallback: number): number {

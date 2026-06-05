@@ -148,11 +148,13 @@ function getDropError(rejections: FileRejection[]): FailureReason | null {
 }
 
 function createCloudFallbackMetadata(file: File, presetId: ExportPresetId): VideoMetadata {
+  const preset = exportPresets[presetId];
+
   return {
     name: file.name,
     sizeBytes: file.size,
     mimeType: file.type || 'video/unknown',
-    durationSeconds: exportPresets[presetId].defaultDurationSeconds,
+    durationSeconds: preset.maxDurationSeconds,
     width: null,
     height: null,
     hasAudio: null,
@@ -165,7 +167,7 @@ function getDefaultDraftForPreset(
   metadata: VideoMetadata | null,
 ): ConversionDraft {
   const preset = exportPresets[presetId];
-  const maxDuration = metadata?.durationSeconds ?? preset.defaultDurationSeconds;
+  const maxDuration = Math.min(metadata?.durationSeconds ?? preset.defaultDurationSeconds, preset.maxDurationSeconds);
   const clipDuration = Math.min(preset.defaultDurationSeconds, maxDuration);
   const endSeconds = Math.max(clipDuration, productLimits.minDurationSeconds);
   const keyframeSeconds = endSeconds / 2;
@@ -366,6 +368,35 @@ export function VidLiveTool() {
     };
   }, [draft.keyframeSeconds, file, previewUrl]);
 
+  useEffect(() => {
+    setDraft((current) => {
+      const preset = exportPresets[current.presetId];
+      const sourceDurationMax = metadata?.durationSeconds ?? Math.max(current.endSeconds, preset.defaultDurationSeconds);
+      const nextDurationMax = Math.max(
+        productLimits.minDurationSeconds,
+        Math.min(sourceDurationMax, preset.maxDurationSeconds),
+      );
+      const nextStart = clamp(current.startSeconds, 0, Math.max(0, nextDurationMax - productLimits.minDurationSeconds));
+      const nextEnd = clamp(current.endSeconds, nextStart + productLimits.minDurationSeconds, nextDurationMax);
+      const nextKeyframe = clamp(current.keyframeSeconds, nextStart, nextEnd);
+
+      if (
+        nextStart === current.startSeconds &&
+        nextEnd === current.endSeconds &&
+        nextKeyframe === current.keyframeSeconds
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        startSeconds: nextStart,
+        endSeconds: nextEnd,
+        keyframeSeconds: nextKeyframe,
+      };
+    });
+  }, [metadata?.durationSeconds]);
+
   const acceptedMimeTypes = useMemo(() => {
     return supportedInputs.reduce<Record<string, string[]>>((accumulator, input) => {
       for (const mimeType of input.mimeTypes) {
@@ -464,7 +495,13 @@ export function VidLiveTool() {
 
   const selectedPreset = exportPresets[draft.presetId];
   const keyframeSuggestions = useMemo(() => createKeyframeSuggestions(metadata), [metadata]);
-  const durationMax = metadata?.durationSeconds ?? Math.max(draft.endSeconds, selectedPreset.defaultDurationSeconds);
+  const durationMax = Math.max(
+    productLimits.minDurationSeconds,
+    Math.min(
+      metadata?.durationSeconds ?? Math.max(draft.endSeconds, selectedPreset.defaultDurationSeconds),
+      selectedPreset.maxDurationSeconds,
+    ),
+  );
   const currentFailure = failureReason ? failureAdvice[failureReason] : null;
   const clipDuration = Math.max(0, draft.endSeconds - draft.startSeconds);
   const cloudBusy = isCloudJobActive(cloudJob);
@@ -761,7 +798,7 @@ export function VidLiveTool() {
                   onChange={updateKeyframe}
                 />
                 <p className="mt-2 rounded-lg border border-ink/10 bg-[#fff4df] px-3 py-2 text-xs font-bold text-ink/65">
-                  当前片段：{formatSeconds(clipDuration)}
+                  当前片段：{formatSeconds(clipDuration)} / 实况兼容上限：{formatSeconds(selectedPreset.maxDurationSeconds)}
                 </p>
               </Panel>
 
@@ -1378,11 +1415,15 @@ function CloudJobPanel({
     deleted: '已删除',
   };
   const canDownload = job.status === 'completed' && Boolean(job.artifact);
-  const canDownloadAndroidMotionPhoto = job.status === 'completed' && Boolean(job.androidMotionPhoto);
+  const canDownloadAndroidMotionPhoto = job.status === 'completed' && Boolean(job.androidMotionPhoto && androidMotionPhotoUrl);
   const canDownloadAppleLivePhoto = job.status === 'completed' && Boolean(job.artifact || (job.previewPhoto && job.pairedVideo));
   const canPreviewPhoto = job.status === 'completed' && Boolean(job.previewPhoto) && Boolean(previewPhotoUrl);
   const activeDownloadUrl = canDownloadAndroidMotionPhoto ? androidMotionPhotoUrl : canDownload ? downloadUrl : null;
   const qrDataUrl = qrPreview?.downloadUrl === activeDownloadUrl ? qrPreview.dataUrl : null;
+  const downloadButtonClass =
+    'inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 text-sm font-black shadow-clay-sm transition hover:-translate-y-0.5';
+  const disabledDownloadButtonClass =
+    'inline-flex h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border-2 border-ink bg-ink/20 px-3 text-sm font-black text-ink/40 shadow-clay-sm';
 
   useEffect(() => {
     if (!activeDownloadUrl) {
@@ -1482,19 +1523,21 @@ function CloudJobPanel({
       )}
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <button
-          type="button"
-          disabled={!canDownloadAndroidMotionPhoto}
-          onClick={() => {
-            if (job.androidMotionPhoto) {
-              onDownload(job.androidMotionPhoto.downloadUrl);
-            }
-          }}
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#ff715b] px-3 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
-        >
-          <ImageIcon size={16} />
-          下载安卓动图
-        </button>
+        {canDownloadAndroidMotionPhoto && androidMotionPhotoUrl ? (
+          <a
+            href={androidMotionPhotoUrl}
+            download={job.androidMotionPhoto?.fileName ?? 'motion-photo_MP.jpg'}
+            className={`${downloadButtonClass} bg-[#ff715b] text-white`}
+          >
+            <ImageIcon size={16} />
+            下载安卓动图
+          </a>
+        ) : (
+          <button type="button" disabled className={disabledDownloadButtonClass}>
+            <ImageIcon size={16} />
+            {job.status === 'completed' ? '安卓动图未生成' : '下载安卓动图'}
+          </button>
+        )}
         <button
           type="button"
           disabled={!canDownloadAppleLivePhoto || appleDownloadBusy}
@@ -1504,7 +1547,7 @@ function CloudJobPanel({
               setAppleDownloadBusy(false);
             });
           }}
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#6aa9ff] px-3 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+          className={`${downloadButtonClass} bg-[#6aa9ff] text-white disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40`}
         >
           {appleDownloadBusy ? <Loader2 size={16} className="animate-spin" /> : <Smartphone size={16} />}
           苹果实况素材
@@ -1517,7 +1560,7 @@ function CloudJobPanel({
               onDownload(job.artifact.downloadUrl);
             }
           }}
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-3 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+          className={`${downloadButtonClass} bg-[#23b7a4] text-white disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40`}
         >
           <FileArchive size={16} />
           下载素材包
@@ -1527,7 +1570,7 @@ function CloudJobPanel({
           onClick={() => {
             void onDelete();
           }}
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-white px-3 text-sm font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+          className={`${downloadButtonClass} bg-white text-ink`}
         >
           <CloudOff size={16} />
           删除

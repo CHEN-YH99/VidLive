@@ -63,8 +63,11 @@ export class LivePhotoService {
     const manifestPath = path.join(input.workDir, 'manifest.json');
     const readmePath = path.join(input.workDir, 'README.txt');
     const zipPath = path.join(input.workDir, 'vidlive-phase0-livephoto-poc.zip');
+    const androidPhotoPath = path.join(input.workDir, 'motion-photo.jpg');
     const androidVideoPath = path.join(input.workDir, 'motion-video.mp4');
     const androidMotionPhotoPath = path.join(input.workDir, 'motion-photo_MP.jpg');
+    const androidDraft = createAndroidMotionPhotoDraft(input.draft);
+    const androidKeyframeSeconds = keyframeSeconds - startSeconds;
 
     await this.ffmpeg.extractJpegFrame({
       inputPath: input.sourcePath,
@@ -85,7 +88,12 @@ export class LivePhotoService {
       startSeconds,
       durationSeconds,
       muted: input.draft.muted,
-      edit: input.draft,
+      edit: androidDraft,
+    });
+    await this.ffmpeg.extractJpegFrame({
+      inputPath: androidVideoPath,
+      outputPath: androidPhotoPath,
+      timestampSeconds: androidKeyframeSeconds,
     });
     await this.ffmpeg.clipToWebp({
       inputPath: input.sourcePath,
@@ -99,10 +107,10 @@ export class LivePhotoService {
 
     try {
       androidMotionPhoto = await this.androidMotionPhoto.generate({
-        photoPath,
+        photoPath: androidPhotoPath,
         videoPath: androidVideoPath,
         outputPath: androidMotionPhotoPath,
-        presentationTimestampUs: Math.round((keyframeSeconds - startSeconds) * 1_000_000),
+        presentationTimestampUs: Math.round(androidKeyframeSeconds * 1_000_000),
       });
     } catch (error) {
       warnings.push(
@@ -151,6 +159,8 @@ export class LivePhotoService {
                 fileName: 'motion-photo_MP.jpg',
                 videoLengthBytes: androidMotionPhoto.videoLengthBytes,
                 xmpInjected: androidMotionPhoto.xmpInjected,
+                aspectRatioId: androidDraft.aspectRatioId,
+                fitMode: androidDraft.fitMode,
                 expectedAndroidViewer: 'Google Photos or OEM gallery with Motion Photo support',
               }
             : null,
@@ -368,4 +378,12 @@ function createReadme(
     'Warnings:',
     warningText,
   ].join('\n');
+}
+
+function createAndroidMotionPhotoDraft(draft: ConversionDraft): ConversionDraft {
+  return {
+    ...draft,
+    aspectRatioId: '9:16',
+    fitMode: 'cover',
+  };
 }
