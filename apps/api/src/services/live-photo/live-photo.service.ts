@@ -5,6 +5,10 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import type { ConversionDraft } from '@vidlive/shared';
 import { FfmpegService, type ProbeResult } from '../ffmpeg/ffmpeg.service.js';
+import {
+  AndroidMotionPhotoService,
+  type AndroidMotionPhotoResult,
+} from '../motion-photo/android-motion-photo.service.js';
 import { createStoreZip } from './zip-writer.js';
 
 export interface LivePhotoGenerateInput {
@@ -20,6 +24,8 @@ export interface LivePhotoGenerateResult {
   zipPath: string;
   manifestPath: string;
   readmePath: string;
+  androidMotionPhotoPath: string | null;
+  androidMotionPhoto: AndroidMotionPhotoResult | null;
   contentId: string;
   metadataInjected: boolean;
   metadataInjection: LivePhotoMetadataInjectionReport;
@@ -29,6 +35,7 @@ export interface LivePhotoGenerateResult {
 
 export interface LivePhotoMetadataInjectionReport {
   videoContentIdentifierInjected: boolean;
+  photoMakerNoteTemplateApplied: boolean;
   photoContentIdentifierInjected: boolean;
   photoImageUniqueIdInjected: boolean;
 }
@@ -36,7 +43,10 @@ export interface LivePhotoMetadataInjectionReport {
 const execFileAsync = promisify(execFile);
 
 export class LivePhotoService {
-  constructor(private readonly ffmpeg = new FfmpegService()) {}
+  constructor(
+    private readonly ffmpeg = new FfmpegService(),
+    private readonly androidMotionPhoto = new AndroidMotionPhotoService(),
+  ) {}
 
   async generate(input: LivePhotoGenerateInput): Promise<LivePhotoGenerateResult> {
     await mkdir(input.workDir, { recursive: true });
@@ -53,6 +63,8 @@ export class LivePhotoService {
     const manifestPath = path.join(input.workDir, 'manifest.json');
     const readmePath = path.join(input.workDir, 'README.txt');
     const zipPath = path.join(input.workDir, 'vidlive-phase0-livephoto-poc.zip');
+    const androidVideoPath = path.join(input.workDir, 'motion-video.mp4');
+    const androidMotionPhotoPath = path.join(input.workDir, 'motion-photo_MP.jpg');
 
     await this.ffmpeg.extractJpegFrame({
       inputPath: input.sourcePath,
@@ -67,6 +79,14 @@ export class LivePhotoService {
       muted: input.draft.muted,
       edit: input.draft,
     });
+    await this.ffmpeg.clipToMp4({
+      inputPath: input.sourcePath,
+      outputPath: androidVideoPath,
+      startSeconds,
+      durationSeconds,
+      muted: input.draft.muted,
+      edit: input.draft,
+    });
     await this.ffmpeg.clipToWebp({
       inputPath: input.sourcePath,
       outputPath: webpPath,
@@ -74,6 +94,21 @@ export class LivePhotoService {
       durationSeconds,
       edit: input.draft,
     });
+
+    let androidMotionPhoto: AndroidMotionPhotoResult | null = null;
+
+    try {
+      androidMotionPhoto = await this.androidMotionPhoto.generate({
+        photoPath,
+        videoPath: androidVideoPath,
+        outputPath: androidMotionPhotoPath,
+        presentationTimestampUs: Math.round((keyframeSeconds - startSeconds) * 1_000_000),
+      });
+    } catch (error) {
+      warnings.push(
+        `android-motion-photo-failed: ${error instanceof Error ? error.message : 'Unknown Android Motion Photo error'}`,
+      );
+    }
 
     const metadataInjection = await this.injectLivePhotoMetadata({
       photoPath,
@@ -108,13 +143,23 @@ export class LivePhotoService {
             photo: 'photo.jpg',
             video: 'video.mov',
             webp: 'animated.webp',
+            androidMotionPhoto: androidMotionPhoto ? 'motion-photo_MP.jpg' : null,
             readme: 'README.txt',
           },
+          androidMotionPhoto: androidMotionPhoto
+            ? {
+                fileName: 'motion-photo_MP.jpg',
+                videoLengthBytes: androidMotionPhoto.videoLengthBytes,
+                xmpInjected: androidMotionPhoto.xmpInjected,
+                expectedAndroidViewer: 'Google Photos or OEM gallery with Motion Photo support',
+              }
+            : null,
           warnings,
           nextVerification: [
             'AirDrop ZIP to iPhone and try importing files.',
             'Verify whether Photos recognizes the pair as Live Photo.',
             'Safari ZIP download alone is expected to stay as files, not a Photos Live Photo asset.',
+            'Copy motion-photo_MP.jpg to Android and open it in Google Photos or an OEM gallery.',
             'Try iOS 17+ lock screen wallpaper with 1-2 second preset.',
           ],
         },
@@ -123,16 +168,19 @@ export class LivePhotoService {
       ),
     );
     await writeFile(readmePath, createReadme(contentId, metadataInjected, metadataInjection, warnings));
-    await createStoreZip(
-      [
-        { sourcePath: photoPath, entryName: 'photo.jpg' },
-        { sourcePath: movPath, entryName: 'video.mov' },
-        { sourcePath: webpPath, entryName: 'animated.webp' },
-        { sourcePath: manifestPath, entryName: 'manifest.json' },
-        { sourcePath: readmePath, entryName: 'README.txt' },
-      ],
-      zipPath,
-    );
+    const zipEntries = [
+      { sourcePath: photoPath, entryName: 'photo.jpg' },
+      { sourcePath: movPath, entryName: 'video.mov' },
+      { sourcePath: webpPath, entryName: 'animated.webp' },
+      { sourcePath: manifestPath, entryName: 'manifest.json' },
+      { sourcePath: readmePath, entryName: 'README.txt' },
+    ];
+
+    if (androidMotionPhoto) {
+      zipEntries.splice(3, 0, { sourcePath: androidMotionPhoto.path, entryName: 'motion-photo_MP.jpg' });
+    }
+
+    await createStoreZip(zipEntries, zipPath);
 
     return {
       photoPath,
@@ -141,6 +189,8 @@ export class LivePhotoService {
       zipPath,
       manifestPath,
       readmePath,
+      androidMotionPhotoPath: androidMotionPhoto?.path ?? null,
+      androidMotionPhoto,
       contentId,
       metadataInjected,
       metadataInjection,
@@ -157,6 +207,7 @@ export class LivePhotoService {
   }): Promise<LivePhotoMetadataInjectionReport> {
     const report: LivePhotoMetadataInjectionReport = {
       videoContentIdentifierInjected: false,
+      photoMakerNoteTemplateApplied: false,
       photoContentIdentifierInjected: false,
       photoImageUniqueIdInjected: false,
     };
@@ -191,6 +242,7 @@ export class LivePhotoService {
     }
 
     try {
+      report.photoMakerNoteTemplateApplied = await this.applyPhotoMakerNoteTemplate(input.photoPath, input.warnings);
       await execFileAsync('exiftool', [
         '-overwrite_original',
         `-ContentIdentifier=${input.contentId}`,
@@ -209,9 +261,11 @@ export class LivePhotoService {
       );
 
       if (!report.photoContentIdentifierInjected) {
-        input.warnings.push(
-          'photo-content-identifier-missing: FFmpeg 生成的 JPEG 没有 Apple MakerNote ContentIdentifier；ExifTool 不能凭空创建该私有 MakerNote，需要原生 Live Photo 静态图模板或 macOS PhotoKit/AVFoundation 写入。',
-        );
+        const warning = report.photoMakerNoteTemplateApplied
+          ? 'photo-content-identifier-missing: 已复制原生照片 MakerNotes，但照片仍未读回匹配的 Apple ContentIdentifier。'
+          : 'photo-maker-note-template-missing: FFmpeg 生成的 JPEG 没有 Apple MakerNote ContentIdentifier；请配置 LIVE_PHOTO_TEMPLATE_IMAGE_PATH 指向 iPhone 原生 Live Photo 静态图模板。';
+
+        input.warnings.push(warning);
       }
     } catch (error) {
       input.warnings.push(
@@ -220,6 +274,33 @@ export class LivePhotoService {
     }
 
     return report;
+  }
+
+  private async applyPhotoMakerNoteTemplate(photoPath: string, warnings: string[]): Promise<boolean> {
+    const templatePath = process.env.LIVE_PHOTO_TEMPLATE_IMAGE_PATH?.trim();
+
+    if (!templatePath) {
+      return false;
+    }
+
+    try {
+      await execFileAsync('exiftool', [
+        '-overwrite_original',
+        '-TagsFromFile',
+        templatePath,
+        '-Make',
+        '-Model',
+        '-MakerNotes',
+        photoPath,
+      ]);
+
+      return true;
+    } catch (error) {
+      warnings.push(
+        `photo-maker-note-template-failed: ${error instanceof Error ? error.message : 'Unknown exiftool error'}`,
+      );
+      return false;
+    }
   }
 }
 
@@ -263,6 +344,7 @@ function createReadme(
     `Content Identifier: ${contentId}`,
     `Metadata Injected: ${metadataInjected ? 'yes' : 'no'}`,
     `MOV Content Identifier: ${metadataInjection.videoContentIdentifierInjected ? 'yes' : 'no'}`,
+    `Photo MakerNote Template: ${metadataInjection.photoMakerNoteTemplateApplied ? 'yes' : 'no'}`,
     `Photo Content Identifier: ${metadataInjection.photoContentIdentifierInjected ? 'yes' : 'no'}`,
     `Photo ImageUniqueID: ${metadataInjection.photoImageUniqueIdInjected ? 'yes' : 'no'}`,
     '',
@@ -273,6 +355,7 @@ function createReadme(
     'Artifacts:',
     '- photo.jpg: extracted key frame',
     '- video.mov: H.264 MOV clip',
+    '- motion-photo_MP.jpg: Android Motion Photo single-file experiment',
     '- animated.webp: WebP fallback export',
     '- manifest.json: generation parameters and probe result',
     '',

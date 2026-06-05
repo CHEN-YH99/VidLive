@@ -8,6 +8,7 @@ VidLive 是一个 Web 优先的视频转 Live Photo 素材工具。项目目标�
 
 - 本地模式：在浏览器内读取素材、选择预设、裁剪时长、选关键帧并导出素材包。
 - 云端模式：上传视频到 Fastify API，生成 `photo.jpg`、`video.mov`、`animated.webp`、`manifest.json`、`README.txt`。
+- Android 实况实验：云端 ZIP 会额外生成 `motion-photo_MP.jpg`，用于 Android Motion Photo 真机测试。
 - Web 代理：手机访问 Web 时通过同源 `/api/proxy` 转发到本机 API，避免 iPhone 把 `localhost` 当成自己。
 - 真机验证：iPhone 13 Safari 已验证可访问页面、提交云端任务、下载 ZIP。
 - 元数据诊断：manifest 会拆分显示 MOV 和照片侧的 Live Photo 元数据写入情况。
@@ -23,6 +24,7 @@ VidLive 是一个 Web 优先的视频转 Live Photo 素材工具。项目目标�
   "metadataInjected": false,
   "metadataInjection": {
     "videoContentIdentifierInjected": true,
+    "photoMakerNoteTemplateApplied": false,
     "photoContentIdentifierInjected": false,
     "photoImageUniqueIdInjected": true
   }
@@ -37,6 +39,7 @@ VidLive 是一个 Web 优先的视频转 Live Photo 素材工具。项目目标�
 apps/
   web/       Next.js App Router 工具页
   api/       Fastify API 与云端转换任务
+  ios-importer/  iOS PhotoKit 导入器验证工程
 packages/
   shared/    共享产品常量和 TypeScript 契约
 scripts/     阶段检查、smoke test 和矩阵检查
@@ -82,6 +85,12 @@ docker build -f apps/api/Dockerfile -t vidlive-api-exiftool-check .
 
 ```bash
 docker run -d --name vidlive-api-poc -p 3011:3001 -e API_HOST=0.0.0.0 -e API_PORT=3001 -e UPLOAD_DIR=/tmp/vidlive/uploads vidlive-api-exiftool-check
+```
+
+如果已经从 iPhone 原生实况照片拿到静态图模板，可以挂载模板目录并启用照片侧 MakerNote 复制：
+
+```bash
+docker run -d --name vidlive-api-poc -p 3011:3001 -e API_HOST=0.0.0.0 -e API_PORT=3001 -e UPLOAD_DIR=/tmp/vidlive/uploads -e LIVE_PHOTO_TEMPLATE_IMAGE_PATH=/tmp/vidlive/reference/IMG_3579.JPG -v ./tmp/iphone-livephoto-reference:/tmp/vidlive/reference:ro vidlive-api-exiftool-check
 ```
 
 检查环境：
@@ -156,12 +165,15 @@ pnpm run p2:check
 ```text
 photo.jpg
 video.mov
+motion-photo_MP.jpg
 animated.webp
 manifest.json
 README.txt
 ```
 
 `manifest.json` 是判断当前链路是否接近 Live Photo 识别的关键文件。不要只看 ZIP 里有没有 MOV/JPG，重点看 `metadataInjected` 和 `metadataInjection`。
+
+`motion-photo_MP.jpg` 是 Android Motion Photo 实验文件：它是单个 JPEG 文件，内部追加了 MP4 片段，并通过 XMP 标记视频位置。把它复制到 Android 手机后，用 Google Photos 或厂商相册打开，检查是否出现动态照片/实况/动作照片入口。
 
 ## Git 忽略策略
 
@@ -180,6 +192,7 @@ tmp/
 
 ## 当前下一步
 
-1. 从 iPhone 原生实况照片导出未修改原件，拿到 `.HEIC/.JPG + .MOV` 配对文件。
-2. 用原生照片里的 Apple MakerNote 作为模板，验证是否能写入生成照片的 ContentIdentifier。
-3. 如果模板链路仍不稳定，改走 macOS PhotoKit / Shortcuts 作为正式保存路径。
+1. 使用 iPhone 原生实况照片静态图作为 MakerNote 模板，生成 `metadataInjected: true` 的 ZIP。
+2. 文件 App 基线验证已确认：直接保存 `photo.jpg + video.mov` 会变成普通照片和普通视频，不会自动合成 Live Photo。
+3. Android 方向优先验证 `motion-photo_MP.jpg` 是否能被 Google Photos 或厂商相册识别为 Motion Photo。
+4. iOS 方向使用 `apps/ios-importer` 的 PhotoKit 导入器，把 `photo.jpg` 作为 `.photo`、`video.mov` 作为 `.pairedVideo` 写入照片库。

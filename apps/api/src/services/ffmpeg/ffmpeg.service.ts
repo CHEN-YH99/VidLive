@@ -139,6 +139,10 @@ export class FfmpegService {
     return options.outputPath;
   }
 
+  async clipToMp4(options: ClipOptions): Promise<string> {
+    return this.clipToMov(options);
+  }
+
   async clipToWebp(options: WebpOptions): Promise<string> {
     await mkdir(path.dirname(options.outputPath), { recursive: true });
 
