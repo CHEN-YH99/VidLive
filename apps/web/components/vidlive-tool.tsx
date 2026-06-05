@@ -34,12 +34,19 @@ import {
   productLimits,
   supportedInputs,
   type ConversionDraft,
+  type ExportPreset,
   type ExportPresetId,
   type FailureReason,
   type FitMode,
   type VideoMetadata,
 } from '@vidlive/shared';
-import { captureCoverFrame, inspectImageLikeFile, inspectVideoFile, isSupportedInput } from '@/lib/file-inspector';
+import {
+  captureCoverFrame,
+  inspectImageLikeFile,
+  inspectMp4ContainerFile,
+  inspectVideoFile,
+  isSupportedInput,
+} from '@/lib/file-inspector';
 import { clamp, formatBytes, formatSeconds } from '@/lib/format';
 import { downloadBlob, generateLocalExport, type LocalExportArtifact, type LocalExportResult } from '@/lib/local-export';
 
@@ -167,9 +174,8 @@ function getDefaultDraftForPreset(
   metadata: VideoMetadata | null,
 ): ConversionDraft {
   const preset = exportPresets[presetId];
-  const maxDuration = Math.min(metadata?.durationSeconds ?? preset.defaultDurationSeconds, preset.maxDurationSeconds);
-  const clipDuration = Math.min(preset.defaultDurationSeconds, maxDuration);
-  const endSeconds = Math.max(clipDuration, productLimits.minDurationSeconds);
+  const clipDuration = getTargetClipDuration(preset, metadata?.durationSeconds);
+  const endSeconds = clipDuration;
   const keyframeSeconds = endSeconds / 2;
 
   return {
@@ -264,28 +270,34 @@ function createCloudQuery(draft: ConversionDraft): string {
   return query.toString();
 }
 
-function createKeyframeSuggestions(metadata: VideoMetadata | null): KeyframeSuggestion[] {
-  const duration = Math.max(1, Math.min(metadata?.durationSeconds ?? 0, 30));
+function getTargetClipDuration(preset: ExportPreset, sourceDurationSeconds: number | null | undefined): number {
+  const sourceDuration = sourceDurationSeconds ?? preset.maxDurationSeconds;
+  return Math.max(productLimits.minDurationSeconds, Math.min(sourceDuration, preset.maxDurationSeconds));
+}
 
-  if (!metadata?.durationSeconds) {
+function createKeyframeSuggestions(startSeconds: number, endSeconds: number, metadata: VideoMetadata | null): KeyframeSuggestion[] {
+  const duration = Math.max(0, endSeconds - startSeconds);
+
+  if (!metadata || duration < productLimits.minDurationSeconds) {
     return [];
   }
 
-  const verticalBonus = metadata.height && metadata.width && metadata.height > metadata.width ? 8 : 0;
+  const verticalBonus = metadata?.height && metadata.width && metadata.height > metadata.width ? 8 : 0;
+  const at = (ratio: number) => Math.round((startSeconds + duration * ratio) * 10) / 10;
 
   return [
     {
-      seconds: Math.round((duration / 2) * 10) / 10,
+      seconds: at(0.5),
       score: 86 + verticalBonus,
       reasons: ['片段中点稳定', '默认封面候选'],
     },
     {
-      seconds: Math.round(Math.max(0.2, duration * 0.38) * 10) / 10,
+      seconds: at(0.38),
       score: 78,
       reasons: ['避开开头黑场', '保留动作起势'],
     },
     {
-      seconds: Math.round(Math.min(duration - 0.2, duration * 0.68) * 10) / 10,
+      seconds: at(0.68),
       score: 74 + verticalBonus,
       reasons: ['避开结尾停顿', '适合锁屏复测'],
     },
@@ -299,6 +311,7 @@ export function VidLiveTool() {
   const [draft, setDraft] = useState<ConversionDraft>(initialDraft);
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [previewPlaybackFailed, setPreviewPlaybackFailed] = useState(false);
+  const [playheadSeconds, setPlayheadSeconds] = useState(0);
   const [failureReason, setFailureReason] = useState<FailureReason | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -371,13 +384,10 @@ export function VidLiveTool() {
   useEffect(() => {
     setDraft((current) => {
       const preset = exportPresets[current.presetId];
-      const sourceDurationMax = metadata?.durationSeconds ?? Math.max(current.endSeconds, preset.defaultDurationSeconds);
-      const nextDurationMax = Math.max(
-        productLimits.minDurationSeconds,
-        Math.min(sourceDurationMax, preset.maxDurationSeconds),
-      );
-      const nextStart = clamp(current.startSeconds, 0, Math.max(0, nextDurationMax - productLimits.minDurationSeconds));
-      const nextEnd = clamp(current.endSeconds, nextStart + productLimits.minDurationSeconds, nextDurationMax);
+      const sourceDurationMax = Math.max(productLimits.minDurationSeconds, metadata?.durationSeconds ?? preset.maxDurationSeconds);
+      const clipTargetDuration = getTargetClipDuration(preset, sourceDurationMax);
+      const nextStart = clamp(current.startSeconds, 0, Math.max(0, sourceDurationMax - clipTargetDuration));
+      const nextEnd = nextStart + clipTargetDuration;
       const nextKeyframe = clamp(current.keyframeSeconds, nextStart, nextEnd);
 
       if (
@@ -427,6 +437,7 @@ export function VidLiveTool() {
       setFailureReason(null);
       setCoverUrl(null);
       setPreviewPlaybackFailed(false);
+      setPlayheadSeconds(0);
       setExportResult(null);
       setCloudJob(null);
       setCloudConsentConfirmed(false);
@@ -461,7 +472,8 @@ export function VidLiveTool() {
           return;
         }
 
-        const fallbackMetadata = createCloudFallbackMetadata(selectedFile, draft.presetId);
+        const containerMetadata = await inspectMp4ContainerFile(selectedFile).catch(() => null);
+        const fallbackMetadata = containerMetadata ?? createCloudFallbackMetadata(selectedFile, draft.presetId);
 
         setFile(selectedFile);
         setMetadata(fallbackMetadata);
@@ -494,16 +506,19 @@ export function VidLiveTool() {
   });
 
   const selectedPreset = exportPresets[draft.presetId];
-  const keyframeSuggestions = useMemo(() => createKeyframeSuggestions(metadata), [metadata]);
-  const durationMax = Math.max(
+  const sourceDurationMax = Math.max(
     productLimits.minDurationSeconds,
-    Math.min(
-      metadata?.durationSeconds ?? Math.max(draft.endSeconds, selectedPreset.defaultDurationSeconds),
-      selectedPreset.maxDurationSeconds,
-    ),
+    metadata?.durationSeconds ?? selectedPreset.maxDurationSeconds,
+  );
+  const clipTargetDuration = getTargetClipDuration(selectedPreset, sourceDurationMax);
+  const startMax = Math.max(0, sourceDurationMax - clipTargetDuration);
+  const keyframeSuggestions = useMemo(
+    () => createKeyframeSuggestions(draft.startSeconds, draft.endSeconds, metadata),
+    [draft.endSeconds, draft.startSeconds, metadata],
   );
   const currentFailure = failureReason ? failureAdvice[failureReason] : null;
   const clipDuration = Math.max(0, draft.endSeconds - draft.startSeconds);
+  const currentPlayheadSeconds = clamp(playheadSeconds, 0, sourceDurationMax);
   const cloudBusy = isCloudJobActive(cloudJob);
   const cloudConsentRequired = draft.mode === 'cloud' && !cloudConsentConfirmed;
   const canGenerate = Boolean(
@@ -521,26 +536,15 @@ export function VidLiveTool() {
     setExportResult(null);
     setCloudJob(null);
     setDraft((current) => {
-      const nextStart = clamp(value, 0, Math.max(0, current.endSeconds - productLimits.minDurationSeconds));
-      const nextKeyframe = clamp(current.keyframeSeconds, nextStart, current.endSeconds);
+      const preset = exportPresets[current.presetId];
+      const nextClipDuration = getTargetClipDuration(preset, sourceDurationMax);
+      const nextStart = clamp(value, 0, Math.max(0, sourceDurationMax - nextClipDuration));
+      const nextEnd = nextStart + nextClipDuration;
+      const nextKeyframe = nextStart + nextClipDuration / 2;
 
       return {
         ...current,
         startSeconds: nextStart,
-        keyframeSeconds: nextKeyframe,
-      };
-    });
-  };
-
-  const updateEnd = (value: number) => {
-    setExportResult(null);
-    setCloudJob(null);
-    setDraft((current) => {
-      const nextEnd = clamp(value, current.startSeconds + productLimits.minDurationSeconds, durationMax);
-      const nextKeyframe = clamp(current.keyframeSeconds, current.startSeconds, nextEnd);
-
-      return {
-        ...current,
         endSeconds: nextEnd,
         keyframeSeconds: nextKeyframe,
       };
@@ -660,6 +664,7 @@ export function VidLiveTool() {
                 open={open}
                 onPlaybackError={() => setPreviewPlaybackFailed(true)}
                 onPlaybackReady={() => setPreviewPlaybackFailed(false)}
+                onPlaybackTimeChange={setPlayheadSeconds}
               />
 
               {currentFailure && <FailureNotice title={currentFailure.title} action={currentFailure.action} />}
@@ -683,6 +688,7 @@ export function VidLiveTool() {
                   playbackFailed={previewPlaybackFailed}
                   onPlaybackError={() => setPreviewPlaybackFailed(true)}
                   onPlaybackReady={() => setPreviewPlaybackFailed(false)}
+                  onPlaybackTimeChange={setPlayheadSeconds}
                 />
                 <CoverPreview coverUrl={coverUrl} isGif={Boolean(file && isGif(file))} open={open} />
               </section>
@@ -773,21 +779,36 @@ export function VidLiveTool() {
               </Panel>
 
               <Panel title="时间轴" icon={<Scissors size={18} />}>
+                <div className="mb-3 rounded-lg border-2 border-ink/15 bg-white p-3">
+                  <div className="mb-2 flex items-center justify-between gap-3 text-sm font-bold text-ink/70">
+                    <span>播放位置</span>
+                    <span className="font-mono text-xs text-ink">{formatSeconds(currentPlayheadSeconds)}</span>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <TimelineMarkButton
+                      label="设为起点"
+                      disabled={!file || Boolean(file && isGif(file))}
+                      onClick={() => updateStart(currentPlayheadSeconds)}
+                    />
+                    <TimelineMarkButton
+                      label="设为关键帧"
+                      disabled={!file || Boolean(file && isGif(file))}
+                      onClick={() => updateKeyframe(currentPlayheadSeconds)}
+                    />
+                  </div>
+                </div>
                 <RangeField
                   label="起点"
                   value={draft.startSeconds}
                   min={0}
-                  max={Math.max(0, draft.endSeconds - productLimits.minDurationSeconds)}
+                  max={startMax}
                   step={0.1}
                   onChange={updateStart}
                 />
-                <RangeField
+                <ReadonlyTimelineField
                   label="终点"
                   value={draft.endSeconds}
-                  min={draft.startSeconds + productLimits.minDurationSeconds}
-                  max={durationMax}
-                  step={0.1}
-                  onChange={updateEnd}
+                  hint={`起点 + ${formatSeconds(clipTargetDuration)}`}
                 />
                 <RangeField
                   label="关键帧"
@@ -798,7 +819,7 @@ export function VidLiveTool() {
                   onChange={updateKeyframe}
                 />
                 <p className="mt-2 rounded-lg border border-ink/10 bg-[#fff4df] px-3 py-2 text-xs font-bold text-ink/65">
-                  当前片段：{formatSeconds(clipDuration)} / 实况兼容上限：{formatSeconds(selectedPreset.maxDurationSeconds)}
+                  素材总长：{formatSeconds(sourceDurationMax)} / 当前片段：{formatSeconds(clipDuration)}
                 </p>
               </Panel>
 
@@ -1103,6 +1124,7 @@ function UploadPanel({
   open,
   onPlaybackError,
   onPlaybackReady,
+  onPlaybackTimeChange,
 }: {
   file: File | null;
   previewUrl: string | null;
@@ -1115,6 +1137,7 @@ function UploadPanel({
   open: () => void;
   onPlaybackError: () => void;
   onPlaybackReady: () => void;
+  onPlaybackTimeChange: (seconds: number) => void;
 }) {
   return (
     <section
@@ -1167,6 +1190,8 @@ function UploadPanel({
               controls
               onError={onPlaybackError}
               onCanPlay={onPlaybackReady}
+              onLoadedMetadata={(event) => onPlaybackTimeChange(event.currentTarget.currentTime)}
+              onTimeUpdate={(event) => onPlaybackTimeChange(event.currentTarget.currentTime)}
             />
           )
         ) : (
@@ -1195,6 +1220,7 @@ function MediaPreview({
   playbackFailed,
   onPlaybackError,
   onPlaybackReady,
+  onPlaybackTimeChange,
 }: {
   file: File | null;
   previewUrl: string | null;
@@ -1202,6 +1228,7 @@ function MediaPreview({
   playbackFailed: boolean;
   onPlaybackError: () => void;
   onPlaybackReady: () => void;
+  onPlaybackTimeChange: (seconds: number) => void;
 }) {
   if (!previewUrl || !file) {
     return (
@@ -1228,6 +1255,8 @@ function MediaPreview({
           preload="metadata"
           onError={onPlaybackError}
           onCanPlay={onPlaybackReady}
+          onLoadedMetadata={(event) => onPlaybackTimeChange(event.currentTarget.currentTime)}
+          onTimeUpdate={(event) => onPlaybackTimeChange(event.currentTarget.currentTime)}
         />
       )}
       {!isGif(file) && playbackFailed && (
@@ -1610,6 +1639,19 @@ function PresetButton({ active, presetId, onClick }: { active: boolean; presetId
   );
 }
 
+function TimelineMarkButton({ label, disabled, onClick }: { label: string; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex h-10 items-center justify-center rounded-lg border-2 border-ink bg-[#e4f7ff] px-3 text-xs font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/10 disabled:text-ink/35"
+    >
+      {label}
+    </button>
+  );
+}
+
 function Panel({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
     <section className="clay-card bg-white p-4">
@@ -1701,6 +1743,18 @@ function RangeField({
         className="w-full accent-[#ff715b]"
       />
     </label>
+  );
+}
+
+function ReadonlyTimelineField({ label, value, hint }: { label: string; value: number; hint: string }) {
+  return (
+    <div className="mb-3 rounded-lg border border-ink/10 bg-[#f7f2ea] px-3 py-2">
+      <div className="flex items-center justify-between gap-3 text-sm font-bold text-ink/70">
+        <span>{label}</span>
+        <span className="font-mono text-xs text-ink">{formatSeconds(value)}</span>
+      </div>
+      <p className="mt-1 text-xs font-bold text-ink/50">{hint}</p>
+    </div>
   );
 }
 

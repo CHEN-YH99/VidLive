@@ -70,6 +70,29 @@ export function inspectImageLikeFile(file: File): VideoMetadata {
   };
 }
 
+export async function inspectMp4ContainerFile(file: File): Promise<VideoMetadata | null> {
+  if (!isSupportedInput(file) || file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')) {
+    return null;
+  }
+
+  const buffer = await file.arrayBuffer();
+  const durationSeconds = readMp4DurationSeconds(new DataView(buffer));
+
+  if (!durationSeconds) {
+    return null;
+  }
+
+  return {
+    name: file.name,
+    sizeBytes: file.size,
+    mimeType: file.type || 'video/unknown',
+    durationSeconds,
+    width: null,
+    height: null,
+    hasAudio: null,
+  };
+}
+
 export function captureCoverFrame(videoUrl: string, seconds: number): Promise<string | null> {
   return new Promise((resolve) => {
     const video = document.createElement('video');
@@ -150,4 +173,80 @@ export function captureCoverFrame(videoUrl: string, seconds: number): Promise<st
     video.src = videoUrl;
     video.load();
   });
+}
+
+interface Mp4Box {
+  offset: number;
+  size: number;
+  headerSize: number;
+}
+
+function readMp4DurationSeconds(view: DataView): number | null {
+  const moov = findMp4Box(view, 0, view.byteLength, 'moov');
+
+  if (!moov) {
+    return null;
+  }
+
+  const mvhd = findMp4Box(view, moov.offset + moov.headerSize, moov.offset + moov.size, 'mvhd');
+
+  if (!mvhd || mvhd.offset + mvhd.size > view.byteLength) {
+    return null;
+  }
+
+  const version = view.getUint8(mvhd.offset + mvhd.headerSize);
+
+  if (version === 1) {
+    const timescale = view.getUint32(mvhd.offset + mvhd.headerSize + 20);
+    const duration = Number(view.getBigUint64(mvhd.offset + mvhd.headerSize + 24));
+    return timescale > 0 && Number.isFinite(duration) ? duration / timescale : null;
+  }
+
+  const timescale = view.getUint32(mvhd.offset + mvhd.headerSize + 12);
+  const duration = view.getUint32(mvhd.offset + mvhd.headerSize + 16);
+
+  return timescale > 0 ? duration / timescale : null;
+}
+
+function findMp4Box(view: DataView, start: number, end: number, targetType: string): Mp4Box | null {
+  let offset = start;
+
+  while (offset + 8 <= end && offset + 8 <= view.byteLength) {
+    const size32 = view.getUint32(offset);
+    const type = readMp4BoxType(view, offset + 4);
+    let size = size32;
+    let headerSize = 8;
+
+    if (size32 === 1) {
+      if (offset + 16 > view.byteLength) {
+        return null;
+      }
+
+      size = Number(view.getBigUint64(offset + 8));
+      headerSize = 16;
+    } else if (size32 === 0) {
+      size = end - offset;
+    }
+
+    if (type === targetType) {
+      return { offset, size, headerSize };
+    }
+
+    if (size < headerSize) {
+      return null;
+    }
+
+    offset += size;
+  }
+
+  return null;
+}
+
+function readMp4BoxType(view: DataView, offset: number): string {
+  return String.fromCharCode(
+    view.getUint8(offset),
+    view.getUint8(offset + 1),
+    view.getUint8(offset + 2),
+    view.getUint8(offset + 3),
+  );
 }
