@@ -95,6 +95,18 @@ const backgroundColorOptions = [
   { label: '浅绿', value: '#d9f99d' },
 ] as const;
 
+const modeHelpText = {
+  local: '只在浏览器内解析和打包，不上传素材；适合快速预览和普通素材包。受浏览器能力限制，实况元数据兼容性不如云端。',
+  cloud:
+    '把素材提交到后端处理，用 FFmpeg 和元数据链路生成 Apple / Android 兼容产物；适合最终导出和真机验证。',
+} as const;
+
+const presetHelpText: Record<ExportPresetId, string> = {
+  'standard-live-photo': '默认 3 秒，优先保留原素材比例，适合做相册或 Google Photos 的标准实况/动图兼容验证。',
+  'ios-lock-screen': '默认 2 秒，优先 9:16 竖屏和锁屏壁纸兼容；需要抖音或 iOS 锁屏识别更稳时优先选它。',
+  'social-fallback': '输出 MP4 / GIF / WebP 等兜底格式，不追求严格实况配对；适合社交平台无法识别实况时保底发布。',
+};
+
 type CloudJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
 
 interface CloudJob {
@@ -640,20 +652,23 @@ export function VidLiveTool() {
     <main className="min-h-screen bg-[#fff4df] text-ink">
       <section className="border-b-2 border-ink/10 bg-[#fff4df]">
         <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-4 py-4 sm:px-6 lg:px-8">
-          <header className="flex flex-wrap items-center justify-between gap-3">
+          <header className="grid gap-3 lg:grid-cols-[auto_minmax(280px,1fr)_auto] lg:items-center">
             <div className="inline-flex h-11 items-center gap-2 rounded-lg border-2 border-ink bg-white px-3 font-black shadow-clay-sm">
               <PlayCircle size={18} className="text-[#ff715b]" />
               VidLive
             </div>
-            <div className="flex flex-wrap gap-2">
+
+            <SavePathPanel presetId={draft.presetId} />
+
+            <div className="flex flex-wrap gap-2 lg:justify-end">
               <StatusPill icon={<ShieldCheck size={15} />} label="本地优先" />
               <StatusPill icon={<Clock3 size={15} />} label="1-30 秒" />
               <StatusPill icon={<FileArchive size={15} />} label="素材包导出" />
             </div>
           </header>
 
-          <div className="grid flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_410px]">
-            <div className="flex flex-col gap-5">
+          <div className="grid flex-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="grid min-w-0 gap-5">
               <UploadPanel
                 file={file}
                 previewUrl={previewUrl}
@@ -682,7 +697,7 @@ export function VidLiveTool() {
                 />
               </section>
 
-              <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_230px]">
+              <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
                 <MediaPreview
                   file={file}
                   previewUrl={previewUrl}
@@ -695,30 +710,159 @@ export function VidLiveTool() {
                 <CoverPreview coverUrl={coverUrl} isGif={Boolean(file && isGif(file))} open={open} />
               </section>
 
-              <SavePathPanel presetId={draft.presetId} />
+              <section className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
+                <Panel title="时间轴" icon={<Scissors size={18} />}>
+                  <div className="mb-3 rounded-lg border-2 border-ink/15 bg-white p-3">
+                    <div className="mb-2 flex items-center justify-between gap-3 text-sm font-bold text-ink/70">
+                      <span>播放位置</span>
+                      <span className="font-mono text-xs text-ink">{formatSeconds(currentPlayheadSeconds)}</span>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <TimelineMarkButton
+                        label="设为起点"
+                        disabled={!file || Boolean(file && isGif(file))}
+                        onClick={() => updateStart(currentPlayheadSeconds)}
+                      />
+                      <TimelineMarkButton
+                        label="设为关键帧"
+                        disabled={!file || Boolean(file && isGif(file))}
+                        onClick={() => updateKeyframe(currentPlayheadSeconds)}
+                      />
+                    </div>
+                  </div>
+                  <RangeField
+                    label="起点"
+                    value={draft.startSeconds}
+                    min={0}
+                    max={startMax}
+                    step={0.1}
+                    onChange={updateStart}
+                  />
+                  <ReadonlyTimelineField
+                    label="终点"
+                    value={draft.endSeconds}
+                    hint={`起点 + ${formatSeconds(clipTargetDuration)}`}
+                  />
+                  <RangeField
+                    label="关键帧"
+                    value={draft.keyframeSeconds}
+                    min={draft.startSeconds}
+                    max={draft.endSeconds}
+                    step={0.1}
+                    onChange={updateKeyframe}
+                  />
+                  <p className="mt-2 rounded-lg border border-ink/10 bg-[#fff4df] px-3 py-2 text-xs font-bold text-ink/65">
+                    素材总长：{formatSeconds(sourceDurationMax)} / 当前片段：{formatSeconds(clipDuration)}
+                  </p>
+                </Panel>
+
+                {keyframeSuggestions.length > 0 && (
+                  <Panel title="AI 关键帧" icon={<ImageIcon size={18} />}>
+                    <div className="grid gap-2">
+                      {keyframeSuggestions.map((suggestion) => (
+                        <button
+                          key={suggestion.seconds}
+                          type="button"
+                          onClick={() => updateKeyframe(suggestion.seconds)}
+                          className="rounded-lg border-2 border-ink/15 bg-white p-3 text-left transition hover:border-ink"
+                        >
+                          <span className="flex items-center justify-between gap-3 text-sm font-black text-ink">
+                            <span>{formatSeconds(suggestion.seconds)}</span>
+                            <span className="text-xs text-[#23b7a4]">{suggestion.score}</span>
+                          </span>
+                          <span className="mt-1 block text-xs font-semibold leading-5 text-ink/60">
+                            {suggestion.reasons.join(' / ')}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </Panel>
+                )}
+              </section>
+
+              {(isGenerating || generationProgress > 0 || cloudBusy) && (
+                <ProgressBar
+                  value={generationProgress}
+                  label={draft.mode === 'cloud' || cloudJob ? '云端任务处理中' : isGenerating ? '本地打包中' : '生成完成'}
+                />
+              )}
+
+              {cloudJob && (
+                <CloudJobPanel
+                  job={cloudJob}
+                  downloadUrl={cloudJob.artifact ? toApiUrl(cloudJob.artifact.downloadUrl) : null}
+                  androidMotionPhotoUrl={
+                    cloudJob.androidMotionPhoto ? toApiUrl(cloudJob.androidMotionPhoto.downloadUrl) : null
+                  }
+                  previewPhotoUrl={cloudJob.previewPhoto ? toApiUrl(cloudJob.previewPhoto.downloadUrl) : null}
+                  onDownload={(url) => {
+                    window.location.assign(toApiUrl(url));
+                  }}
+                  onAppleDownload={async () => {
+                    if (cloudJob.previewPhoto && cloudJob.pairedVideo) {
+                      const shared = await shareAppleLivePhotoFiles(
+                        toApiUrl(cloudJob.previewPhoto.downloadUrl),
+                        toApiUrl(cloudJob.pairedVideo.downloadUrl),
+                      );
+
+                      if (shared) {
+                        return;
+                      }
+                    }
+
+                    if (cloudJob.artifact) {
+                      window.location.assign(toApiUrl(cloudJob.artifact.downloadUrl));
+                    }
+                  }}
+                  onDelete={async () => {
+                    await fetch(toApiUrl(`/api/conversions/cloud-jobs/${cloudJob.id}`), {
+                      method: 'DELETE',
+                    });
+                    setCloudJob(null);
+                    setGenerationProgress(0);
+                  }}
+                />
+              )}
+
+              {exportResult || cloudJob?.status === 'completed' ? (
+                <Panel title="兼容反馈" icon={<ShieldCheck size={18} />}>
+                  <div className="grid grid-cols-2 gap-2">
+                    <ToggleButton
+                      active={feedbackStatus === '已记录'}
+                      label="保存成功"
+                      onClick={() => {
+                        void submitCompatibilityFeedback(true, draft.presetId === 'ios-lock-screen');
+                      }}
+                    />
+                    <ToggleButton
+                      active={feedbackStatus === '提交失败'}
+                      label="保存失败"
+                      onClick={() => {
+                        void submitCompatibilityFeedback(false, false);
+                      }}
+                    />
+                  </div>
+                  {feedbackStatus && <p className="mt-2 text-xs font-bold text-ink/60">{feedbackStatus}</p>}
+                </Panel>
+              ) : null}
+
+              {exportResult && packageArtifact && (
+                <ExportResultPanel
+                  result={exportResult}
+                  packageArtifact={packageArtifact}
+                  onDownload={(artifact) => downloadBlob(artifact.blob, artifact.fileName)}
+                />
+              )}
             </div>
 
-            <aside className="flex flex-col gap-4">
-              <Panel title="Phase 1 闭环" icon={<BadgeCheck size={18} />}>
-                <div className="grid grid-cols-4 gap-2">
-                  {phaseSteps.map((step) => (
-                    <div
-                      key={step.label}
-                      className="flex min-h-16 flex-col items-center justify-center rounded-lg border-2 border-ink/15 bg-white text-xs font-black text-ink"
-                    >
-                      {step.icon}
-                      <span className="mt-1">{step.label}</span>
-                    </div>
-                  ))}
-                </div>
-              </Panel>
-
+            <aside className="flex min-w-0 flex-col gap-4">
               <Panel title="处理模式" icon={<CloudOff size={18} />}>
                 <div className="grid grid-cols-2 gap-2">
                   <ModeButton
                     active={draft.mode === 'local'}
                     label="本地"
                     description="不上传素材"
+                    tooltip={modeHelpText.local}
                     onClick={() => {
                       setExportResult(null);
                       setCloudJob(null);
@@ -731,6 +875,7 @@ export function VidLiveTool() {
                     active={draft.mode === 'cloud'}
                     label="云端"
                     description="元数据实验"
+                    tooltip={modeHelpText.cloud}
                     onClick={() => {
                       setExportResult(null);
                       setCloudJob(null);
@@ -739,31 +884,6 @@ export function VidLiveTool() {
                       setFailureReason(null);
                     }}
                   />
-                </div>
-              </Panel>
-
-              <Panel title="Pro 验证" icon={<BadgeCheck size={18} />}>
-                <div className="grid gap-2">
-                  <div className="rounded-lg border-2 border-ink/15 bg-white p-3">
-                    <p className="text-sm font-black text-ink">Free</p>
-                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、本地素材包、标准预设。</p>
-                  </div>
-                  <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-3 shadow-clay-sm">
-                    <p className="text-sm font-black text-ink">Pro Monthly</p>
-                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
-                      批量处理、4K 输出、云端优先队列、历史记录。
-                    </p>
-                  </div>
-                </div>
-              </Panel>
-
-              <Panel title="扩展工具箱" icon={<Film size={18} />}>
-                <div className="grid gap-2">
-                  <ToolboxItem label="Video/GIF to Live Photo 素材包" status="available" />
-                  <ToolboxItem label="相册 Live Photo 写入" status="preview" />
-                  <ToolboxItem label="Live Photo to GIF/MP4" status="preview" />
-                  <ToolboxItem label="Image to Live Photo" status="preview" />
-                  <ToolboxItem label="AI Image Motion" status="planned" />
                 </div>
               </Panel>
 
@@ -779,74 +899,6 @@ export function VidLiveTool() {
                   ))}
                 </div>
               </Panel>
-
-              <Panel title="时间轴" icon={<Scissors size={18} />}>
-                <div className="mb-3 rounded-lg border-2 border-ink/15 bg-white p-3">
-                  <div className="mb-2 flex items-center justify-between gap-3 text-sm font-bold text-ink/70">
-                    <span>播放位置</span>
-                    <span className="font-mono text-xs text-ink">{formatSeconds(currentPlayheadSeconds)}</span>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <TimelineMarkButton
-                      label="设为起点"
-                      disabled={!file || Boolean(file && isGif(file))}
-                      onClick={() => updateStart(currentPlayheadSeconds)}
-                    />
-                    <TimelineMarkButton
-                      label="设为关键帧"
-                      disabled={!file || Boolean(file && isGif(file))}
-                      onClick={() => updateKeyframe(currentPlayheadSeconds)}
-                    />
-                  </div>
-                </div>
-                <RangeField
-                  label="起点"
-                  value={draft.startSeconds}
-                  min={0}
-                  max={startMax}
-                  step={0.1}
-                  onChange={updateStart}
-                />
-                <ReadonlyTimelineField
-                  label="终点"
-                  value={draft.endSeconds}
-                  hint={`起点 + ${formatSeconds(clipTargetDuration)}`}
-                />
-                <RangeField
-                  label="关键帧"
-                  value={draft.keyframeSeconds}
-                  min={draft.startSeconds}
-                  max={draft.endSeconds}
-                  step={0.1}
-                  onChange={updateKeyframe}
-                />
-                <p className="mt-2 rounded-lg border border-ink/10 bg-[#fff4df] px-3 py-2 text-xs font-bold text-ink/65">
-                  素材总长：{formatSeconds(sourceDurationMax)} / 当前片段：{formatSeconds(clipDuration)}
-                </p>
-              </Panel>
-
-              {keyframeSuggestions.length > 0 && (
-                <Panel title="AI 关键帧" icon={<ImageIcon size={18} />}>
-                  <div className="grid gap-2">
-                    {keyframeSuggestions.map((suggestion) => (
-                      <button
-                        key={suggestion.seconds}
-                        type="button"
-                        onClick={() => updateKeyframe(suggestion.seconds)}
-                        className="rounded-lg border-2 border-ink/15 bg-white p-3 text-left transition hover:border-ink"
-                      >
-                        <span className="flex items-center justify-between gap-3 text-sm font-black text-ink">
-                          <span>{formatSeconds(suggestion.seconds)}</span>
-                          <span className="text-xs text-[#23b7a4]">{suggestion.score}</span>
-                        </span>
-                        <span className="mt-1 block text-xs font-semibold leading-5 text-ink/60">
-                          {suggestion.reasons.join(' / ')}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </Panel>
-              )}
 
               <Panel title="画面与声音" icon={<SlidersHorizontal size={18} />}>
                 <div className="grid grid-cols-3 gap-2">
@@ -1032,82 +1084,49 @@ export function VidLiveTool() {
                     ? '提交云端任务'
                     : '生成文件'}
               </button>
-
-              {(isGenerating || generationProgress > 0 || cloudBusy) && (
-                <ProgressBar
-                  value={generationProgress}
-                  label={draft.mode === 'cloud' || cloudJob ? '云端任务处理中' : isGenerating ? '本地打包中' : '生成完成'}
-                />
-              )}
-
-              {cloudJob && (
-                <CloudJobPanel
-                  job={cloudJob}
-                  downloadUrl={cloudJob.artifact ? toApiUrl(cloudJob.artifact.downloadUrl) : null}
-                  androidMotionPhotoUrl={
-                    cloudJob.androidMotionPhoto ? toApiUrl(cloudJob.androidMotionPhoto.downloadUrl) : null
-                  }
-                  previewPhotoUrl={cloudJob.previewPhoto ? toApiUrl(cloudJob.previewPhoto.downloadUrl) : null}
-                  onDownload={(url) => {
-                    window.location.assign(toApiUrl(url));
-                  }}
-                  onAppleDownload={async () => {
-                    if (cloudJob.previewPhoto && cloudJob.pairedVideo) {
-                      const shared = await shareAppleLivePhotoFiles(
-                        toApiUrl(cloudJob.previewPhoto.downloadUrl),
-                        toApiUrl(cloudJob.pairedVideo.downloadUrl),
-                      );
-
-                      if (shared) {
-                        return;
-                      }
-                    }
-
-                    if (cloudJob.artifact) {
-                      window.location.assign(toApiUrl(cloudJob.artifact.downloadUrl));
-                    }
-                  }}
-                  onDelete={async () => {
-                    await fetch(toApiUrl(`/api/conversions/cloud-jobs/${cloudJob.id}`), {
-                      method: 'DELETE',
-                    });
-                    setCloudJob(null);
-                    setGenerationProgress(0);
-                  }}
-                />
-              )}
-
-              {exportResult || cloudJob?.status === 'completed' ? (
-                <Panel title="兼容反馈" icon={<ShieldCheck size={18} />}>
-                  <div className="grid grid-cols-2 gap-2">
-                    <ToggleButton
-                      active={feedbackStatus === '已记录'}
-                      label="保存成功"
-                      onClick={() => {
-                        void submitCompatibilityFeedback(true, draft.presetId === 'ios-lock-screen');
-                      }}
-                    />
-                    <ToggleButton
-                      active={feedbackStatus === '提交失败'}
-                      label="保存失败"
-                      onClick={() => {
-                        void submitCompatibilityFeedback(false, false);
-                      }}
-                    />
-                  </div>
-                  {feedbackStatus && <p className="mt-2 text-xs font-bold text-ink/60">{feedbackStatus}</p>}
-                </Panel>
-              ) : null}
-
-              {exportResult && packageArtifact && (
-                <ExportResultPanel
-                  result={exportResult}
-                  packageArtifact={packageArtifact}
-                  onDownload={(artifact) => downloadBlob(artifact.blob, artifact.fileName)}
-                />
-              )}
             </aside>
           </div>
+
+          <section className="grid gap-4 lg:grid-cols-3">
+            <Panel title="Phase 1 闭环" icon={<BadgeCheck size={18} />}>
+              <div className="grid grid-cols-4 gap-2">
+                {phaseSteps.map((step) => (
+                  <div
+                    key={step.label}
+                    className="flex min-h-16 flex-col items-center justify-center rounded-lg border-2 border-ink/15 bg-white text-xs font-black text-ink"
+                  >
+                    {step.icon}
+                    <span className="mt-1">{step.label}</span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+
+            <Panel title="Pro 验证" icon={<BadgeCheck size={18} />}>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                <div className="rounded-lg border-2 border-ink/15 bg-white p-3">
+                  <p className="text-sm font-black text-ink">Free</p>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、本地素材包、标准预设。</p>
+                </div>
+                <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-3 shadow-clay-sm">
+                  <p className="text-sm font-black text-ink">Pro Monthly</p>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
+                    批量处理、4K 输出、云端优先队列、历史记录。
+                  </p>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="扩展工具箱" icon={<Film size={18} />}>
+              <div className="grid gap-2">
+                <ToolboxItem label="Video/GIF to Live Photo 素材包" status="available" />
+                <ToolboxItem label="相册 Live Photo 写入" status="preview" />
+                <ToolboxItem label="Live Photo to GIF/MP4" status="preview" />
+                <ToolboxItem label="Image to Live Photo" status="preview" />
+                <ToolboxItem label="AI Image Motion" status="planned" />
+              </div>
+            </Panel>
+          </section>
         </div>
       </section>
     </main>
@@ -1299,36 +1318,93 @@ function CoverPreview({ coverUrl, isGif, open }: { coverUrl: string | null; isGi
 
 function SavePathPanel({ presetId }: { presetId: ExportPresetId }) {
   const isLockScreen = presetId === 'ios-lock-screen';
-
-  return (
-    <section className="grid gap-3 md:grid-cols-2">
-      <SavePathCard
-        icon={<Smartphone size={20} />}
-        title={isLockScreen ? 'iPhone 锁屏路径' : 'iPhone 相册路径'}
-        text={
-          isLockScreen
-            ? 'Safari 下载 ZIP 后只会得到文件 App 素材包；要变成锁屏实况，还需云端元数据和真机导入路径验证。'
-            : 'Safari 下载 ZIP 后通过文件 App 查看素材包；这一步不会自动写入 iOS 相册成为实况照片。'
-        }
-      />
-      <SavePathCard
-        icon={<MonitorDown size={20} />}
-        title="桌面下载路径"
-        text="下载 ZIP、关键帧和动态片段；后续用 AirDrop、Shortcuts 或容器云端包验证相册识别。"
-      />
-    </section>
+  const items = useMemo(
+    () => [
+      {
+        id: 'iphone',
+        icon: <Smartphone size={20} />,
+        title: isLockScreen ? 'iPhone 锁屏路径' : 'iPhone 相册路径',
+        text: isLockScreen
+          ? 'Safari 下载 ZIP 后只会得到文件 App 素材包；要变成锁屏实况，还需云端元数据和真机导入路径验证。'
+          : 'Safari 下载 ZIP 后通过文件 App 查看素材包；这一步不会自动写入 iOS 相册成为实况照片。',
+      },
+      {
+        id: 'desktop',
+        icon: <MonitorDown size={20} />,
+        title: '桌面下载路径',
+        text: '下载 ZIP、关键帧和动态片段；后续用 AirDrop、Shortcuts 或容器云端包验证相册识别。',
+      },
+    ],
+    [isLockScreen],
   );
-}
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const activeItem = items[activeIndex] ?? items[0];
+  const tickerItemHeightPx = 44;
 
-function SavePathCard({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
+  useEffect(() => {
+    if (isPaused) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setActiveIndex((current) => (current + 1) % items.length);
+    }, 3600);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isPaused, items.length]);
+
+  if (!activeItem) {
+    return null;
+  }
+
   return (
-    <article className="clay-card flex gap-3 bg-white p-4">
-      <span className="mt-0.5 shrink-0 text-[#23b7a4]">{icon}</span>
-      <div>
-        <p className="text-sm font-black text-ink">{title}</p>
-        <p className="mt-1 text-sm font-semibold leading-6 text-ink/65">{text}</p>
+    <section
+      aria-label="下载路径提示"
+      tabIndex={0}
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      onFocus={() => setIsPaused(true)}
+      onBlur={() => setIsPaused(false)}
+      className="group/path relative min-w-0 focus:outline-none"
+    >
+      <div className="relative h-11 overflow-hidden rounded-lg border-2 border-ink bg-white shadow-clay-sm">
+        <div
+          aria-live="polite"
+          className="will-change-transform transition-transform duration-500 ease-out"
+          style={{ transform: `translateY(-${activeIndex * tickerItemHeightPx}px)` }}
+        >
+          {items.map((item) => (
+            <div key={item.id} className="flex h-11 min-w-0 shrink-0 items-center gap-2 px-3 pr-12">
+              <span className="shrink-0 text-[#23b7a4]">{item.icon}</span>
+              <span className="max-w-28 shrink-0 truncate rounded-md border border-ink/15 bg-[#fff4df] px-2 py-1 text-[11px] font-black text-ink">
+                {item.title}
+              </span>
+              <span className="truncate text-xs font-semibold text-ink/65">{item.text}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="absolute right-3 top-1/2 flex -translate-y-1/2 gap-1">
+          {items.map((item, index) => (
+            <span
+              key={item.id}
+              className={[
+                'h-2 w-2 rounded-full border border-ink/20 transition-colors',
+                activeIndex === index ? 'bg-[#23b7a4]' : 'bg-ink/20',
+              ].join(' ')}
+            />
+          ))}
+        </div>
       </div>
-    </article>
+
+      <div className="pointer-events-none absolute left-0 right-0 top-full z-50 mt-2 hidden rounded-lg border-2 border-ink bg-white p-3 text-xs font-semibold leading-5 text-ink/70 shadow-clay-sm group-hover/path:block group-focus-within/path:block">
+        <p className="text-sm font-black text-ink">{activeItem.title}</p>
+        <p className="mt-1">{activeItem.text}</p>
+      </div>
+    </section>
   );
 }
 
@@ -1623,21 +1699,42 @@ function FailureNotice({ title, action }: { title: string; action: string }) {
   );
 }
 
+function InfoTooltip({ text, className = '' }: { text: string; className?: string }) {
+  return (
+    <span className={['group/tooltip inline-flex', className].join(' ')}>
+      <button
+        type="button"
+        aria-label="查看说明"
+        className="inline-flex h-7 w-7 cursor-help items-center justify-center rounded-full border border-ink/15 bg-white text-ink/55 shadow-clay-sm transition hover:border-ink hover:text-ink focus:outline-none focus:ring-2 focus:ring-[#23b7a4]"
+      >
+        <Info size={14} />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute right-0 top-full z-[90] mt-2 hidden w-72 max-w-[calc(100vw-2rem)] rounded-lg border-2 border-ink bg-white p-3 text-xs font-semibold leading-5 text-ink/70 shadow-clay-sm group-hover/tooltip:block group-focus-within/tooltip:block"
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function PresetButton({ active, presetId, onClick }: { active: boolean; presetId: ExportPresetId; onClick: () => void }) {
   const preset = exportPresets[presetId];
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       className={[
-        'rounded-lg border-2 p-3 text-left transition hover:-translate-y-0.5',
+        'relative z-0 rounded-lg border-2 transition hover:z-40 hover:-translate-y-0.5 focus-within:z-40',
         active ? 'border-ink bg-[#d9f99d] shadow-clay-sm' : 'border-ink/15 bg-white hover:border-ink',
       ].join(' ')}
     >
-      <span className="block text-sm font-black">{preset.label}</span>
-      <span className="mt-1 block text-xs leading-5 text-ink/65">{preset.target}</span>
-    </button>
+      <button type="button" onClick={onClick} className="block w-full p-3 pr-11 text-left">
+        <span className="block text-sm font-black">{preset.label}</span>
+        <span className="mt-1 block text-xs leading-5 text-ink/65">{preset.target}</span>
+      </button>
+      <InfoTooltip text={presetHelpText[presetId]} className="absolute right-3 top-1/2 -translate-y-1/2" />
+    </div>
   );
 }
 
@@ -1687,28 +1784,31 @@ function ModeButton({
   active,
   label,
   description,
+  tooltip,
   onClick,
 }: {
   active: boolean;
   label: string;
   description: string;
+  tooltip: string;
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       className={[
-        'rounded-lg border-2 p-3 text-left transition hover:-translate-y-0.5',
+        'relative z-0 rounded-lg border-2 transition hover:z-40 hover:-translate-y-0.5 focus-within:z-40',
         active ? 'border-ink bg-[#d9f99d] shadow-clay-sm' : 'border-ink/15 bg-white hover:border-ink',
       ].join(' ')}
     >
-      <span className="flex items-center gap-2 text-sm font-black text-ink">
-        {active && <CheckCircle2 size={15} className="text-[#23b7a4]" />}
-        {label}
-      </span>
-      <span className="mt-1 block text-xs font-semibold text-ink/60">{description}</span>
-    </button>
+      <button type="button" onClick={onClick} className="block w-full p-3 pr-11 text-left">
+        <span className="flex items-center gap-2 text-sm font-black text-ink">
+          {active && <CheckCircle2 size={15} className="text-[#23b7a4]" />}
+          {label}
+        </span>
+        <span className="mt-1 block text-xs font-semibold text-ink/60">{description}</span>
+      </button>
+      <InfoTooltip text={tooltip} className="absolute right-3 top-1/2 -translate-y-1/2" />
+    </div>
   );
 }
 
