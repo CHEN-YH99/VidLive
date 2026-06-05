@@ -106,6 +106,11 @@ interface CloudJob {
     sizeBytes: number;
     downloadUrl: string;
   } | null;
+  previewPhoto: {
+    fileName: string;
+    sizeBytes: number;
+    downloadUrl: string;
+  } | null;
   warnings: string[];
   error: {
     code: string;
@@ -249,6 +254,7 @@ export function VidLiveTool() {
   const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
   const [draft, setDraft] = useState<ConversionDraft>(initialDraft);
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [previewPlaybackFailed, setPreviewPlaybackFailed] = useState(false);
   const [failureReason, setFailureReason] = useState<FailureReason | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -280,14 +286,6 @@ export function VidLiveTool() {
   }, []);
 
   useEffect(() => {
-    return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
-    };
-  }, [previewUrl]);
-
-  useEffect(() => {
     if (!cloudJob || !isCloudJobActive(cloudJob)) {
       return;
     }
@@ -312,10 +310,12 @@ export function VidLiveTool() {
     captureCoverFrame(previewUrl, draft.keyframeSeconds).then((frame) => {
       if (!cancelled) {
         setCoverUrl(frame);
+        setPreviewPlaybackFailed((current) => current || !frame);
       }
     }).catch(() => {
       if (!cancelled) {
         setCoverUrl(null);
+        setPreviewPlaybackFailed(true);
       }
     });
 
@@ -353,6 +353,7 @@ export function VidLiveTool() {
       setIsReading(true);
       setFailureReason(null);
       setCoverUrl(null);
+      setPreviewPlaybackFailed(false);
       setExportResult(null);
       setCloudJob(null);
       setCloudConsentConfirmed(false);
@@ -574,9 +575,12 @@ export function VidLiveTool() {
                 draft={draft}
                 isReading={isReading}
                 isDragActive={isDragActive}
+                playbackFailed={previewPlaybackFailed}
                 getRootProps={getRootProps}
                 getInputProps={getInputProps}
                 open={open}
+                onPlaybackError={() => setPreviewPlaybackFailed(true)}
+                onPlaybackReady={() => setPreviewPlaybackFailed(false)}
               />
 
               {currentFailure && <FailureNotice title={currentFailure.title} action={currentFailure.action} />}
@@ -593,7 +597,14 @@ export function VidLiveTool() {
               </section>
 
               <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_230px]">
-                <MediaPreview file={file} previewUrl={previewUrl} draft={draft} />
+                <MediaPreview
+                  file={file}
+                  previewUrl={previewUrl}
+                  draft={draft}
+                  playbackFailed={previewPlaybackFailed}
+                  onPlaybackError={() => setPreviewPlaybackFailed(true)}
+                  onPlaybackReady={() => setPreviewPlaybackFailed(false)}
+                />
                 <CoverPreview coverUrl={coverUrl} isGif={Boolean(file && isGif(file))} open={open} />
               </section>
 
@@ -934,6 +945,7 @@ export function VidLiveTool() {
                   androidMotionPhotoUrl={
                     cloudJob.androidMotionPhoto ? toApiUrl(cloudJob.androidMotionPhoto.downloadUrl) : null
                   }
+                  previewPhotoUrl={cloudJob.previewPhoto ? toApiUrl(cloudJob.previewPhoto.downloadUrl) : null}
                   onDownload={(url) => {
                     window.location.assign(toApiUrl(url));
                   }}
@@ -990,18 +1002,24 @@ function UploadPanel({
   draft,
   isReading,
   isDragActive,
+  playbackFailed,
   getRootProps,
   getInputProps,
   open,
+  onPlaybackError,
+  onPlaybackReady,
 }: {
   file: File | null;
   previewUrl: string | null;
   draft: ConversionDraft;
   isReading: boolean;
   isDragActive: boolean;
+  playbackFailed: boolean;
   getRootProps: ReturnType<typeof useDropzone>['getRootProps'];
   getInputProps: ReturnType<typeof useDropzone>['getInputProps'];
   open: () => void;
+  onPlaybackError: () => void;
+  onPlaybackReady: () => void;
 }) {
   return (
     <section
@@ -1040,12 +1058,21 @@ function UploadPanel({
           </div>
         </div>
       </div>
-      <div className="overflow-hidden rounded-lg border-2 border-ink bg-ink">
+      <div className="relative overflow-hidden rounded-lg border-2 border-ink bg-ink">
         {previewUrl && file ? (
           isGif(file) ? (
             <img src={previewUrl} alt="" className="h-full min-h-52 w-full object-contain" />
           ) : (
-            <video src={previewUrl} className="h-full min-h-52 w-full object-contain" muted={draft.muted} playsInline controls />
+            <video
+              src={previewUrl}
+              className="h-full min-h-52 w-full object-contain"
+              muted={draft.muted}
+              playsInline
+              preload="metadata"
+              controls
+              onError={onPlaybackError}
+              onCanPlay={onPlaybackReady}
+            />
           )
         ) : (
           <div className="flex h-full min-h-52 flex-col items-center justify-center gap-3 bg-[#e4f7ff] text-center">
@@ -1056,12 +1083,31 @@ function UploadPanel({
             </div>
           </div>
         )}
+        {previewUrl && file && !isGif(file) && playbackFailed && (
+          <div className="absolute inset-x-3 bottom-3 rounded-lg border border-ink/20 bg-white/95 p-3 text-xs font-bold leading-5 text-ink shadow-clay-sm">
+            浏览器无法预览此视频，云端仍可生成效果图和动图。
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-function MediaPreview({ file, previewUrl, draft }: { file: File | null; previewUrl: string | null; draft: ConversionDraft }) {
+function MediaPreview({
+  file,
+  previewUrl,
+  draft,
+  playbackFailed,
+  onPlaybackError,
+  onPlaybackReady,
+}: {
+  file: File | null;
+  previewUrl: string | null;
+  draft: ConversionDraft;
+  playbackFailed: boolean;
+  onPlaybackError: () => void;
+  onPlaybackReady: () => void;
+}) {
   if (!previewUrl || !file) {
     return (
       <section className="clay-card flex min-h-80 items-center justify-center bg-white text-ink/55">
@@ -1074,7 +1120,7 @@ function MediaPreview({ file, previewUrl, draft }: { file: File | null; previewU
   }
 
   return (
-    <section className="clay-card overflow-hidden bg-ink">
+    <section className="clay-card relative overflow-hidden bg-ink">
       {isGif(file) ? (
         <img src={previewUrl} alt="" className="h-full max-h-[520px] min-h-80 w-full object-contain" />
       ) : (
@@ -1084,7 +1130,15 @@ function MediaPreview({ file, previewUrl, draft }: { file: File | null; previewU
           controls
           muted={draft.muted}
           playsInline
+          preload="metadata"
+          onError={onPlaybackError}
+          onCanPlay={onPlaybackReady}
         />
+      )}
+      {!isGif(file) && playbackFailed && (
+        <div className="absolute inset-x-4 bottom-4 rounded-lg border border-ink/20 bg-white/95 p-3 text-sm font-bold leading-6 text-ink shadow-clay-sm">
+          浏览器无法播放当前编码，提交云端任务后可查看生成效果图。
+        </div>
       )}
     </section>
   );
@@ -1242,12 +1296,14 @@ function CloudJobPanel({
   job,
   downloadUrl,
   androidMotionPhotoUrl,
+  previewPhotoUrl,
   onDownload,
   onDelete,
 }: {
   job: CloudJob;
   downloadUrl: string | null;
   androidMotionPhotoUrl: string | null;
+  previewPhotoUrl: string | null;
   onDownload: (url: string) => void;
   onDelete: () => Promise<void>;
 }) {
@@ -1262,6 +1318,7 @@ function CloudJobPanel({
   };
   const canDownload = job.status === 'completed' && Boolean(job.artifact);
   const canDownloadAndroidMotionPhoto = job.status === 'completed' && Boolean(job.androidMotionPhoto);
+  const canPreviewPhoto = job.status === 'completed' && Boolean(job.previewPhoto) && Boolean(previewPhotoUrl);
   const activeDownloadUrl = canDownloadAndroidMotionPhoto ? androidMotionPhotoUrl : canDownload ? downloadUrl : null;
   const qrDataUrl = qrPreview?.downloadUrl === activeDownloadUrl ? qrPreview.dataUrl : null;
 
@@ -1314,6 +1371,20 @@ function CloudJobPanel({
           <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
             安卓优先下载单文件动图；ZIP 保留 iOS 配对素材、manifest 和兜底格式。
           </p>
+        </div>
+      )}
+
+      {canPreviewPhoto && previewPhotoUrl && (
+        <div className="mt-3 rounded-lg border-2 border-ink/15 bg-white p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-black text-ink">生成效果图</p>
+            {job.previewPhoto && (
+              <span className="text-xs font-black text-ink/55">{formatBytes(job.previewPhoto.sizeBytes)}</span>
+            )}
+          </div>
+          <div className="mt-3 overflow-hidden rounded-lg border border-ink/15 bg-[#f7f2ea]">
+            <img src={previewPhotoUrl} alt="" className="max-h-72 w-full object-contain" />
+          </div>
         </div>
       )}
 

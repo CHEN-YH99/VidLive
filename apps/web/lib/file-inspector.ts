@@ -13,7 +13,13 @@ export function isSupportedInput(file: File): boolean {
 export function inspectVideoFile(file: File, objectUrl: string): Promise<VideoMetadata> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
+    let timeoutId: number | null = null;
+
     const cleanup = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+
       video.removeAttribute('src');
       video.load();
     };
@@ -42,7 +48,13 @@ export function inspectVideoFile(file: File, objectUrl: string): Promise<VideoMe
       reject(new Error('metadata-read-failed'));
     };
 
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('metadata-read-failed'));
+    }, 10_000);
+
     video.src = objectUrl;
+    video.load();
   });
 }
 
@@ -63,10 +75,26 @@ export function captureCoverFrame(videoUrl: string, seconds: number): Promise<st
     const video = document.createElement('video');
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
+    let settled = false;
+    let timeoutId: number | null = null;
 
     const cleanup = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+
       video.removeAttribute('src');
       video.load();
+    };
+
+    const finish = (frameUrl: string | null) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      resolve(frameUrl);
     };
 
     if (!context) {
@@ -74,29 +102,52 @@ export function captureCoverFrame(videoUrl: string, seconds: number): Promise<st
       return;
     }
 
-    video.preload = 'metadata';
-    video.muted = true;
-    video.playsInline = true;
-    video.crossOrigin = 'anonymous';
+    const drawFrame = () => {
+      if (!video.videoWidth || !video.videoHeight) {
+        finish(null);
+        return;
+      }
 
-    video.onloadedmetadata = () => {
-      const targetTime = Math.min(Math.max(seconds, 0), video.duration || 0);
-      video.currentTime = targetTime;
-    };
-
-    video.onseeked = () => {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      cleanup();
-      resolve(canvas.toDataURL('image/jpeg', 0.84));
+      finish(canvas.toDataURL('image/jpeg', 0.84));
     };
+
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+
+    video.onloadedmetadata = () => {
+      const targetTime = Math.min(Math.max(seconds, 0), video.duration || 0);
+
+      if (targetTime <= 0.05) {
+        if (video.readyState >= 2) {
+          drawFrame();
+        } else {
+          video.onloadeddata = drawFrame;
+        }
+        return;
+      }
+
+      try {
+        video.currentTime = targetTime;
+      } catch {
+        video.onloadeddata = drawFrame;
+      }
+    };
+
+    video.onseeked = drawFrame;
 
     video.onerror = () => {
-      cleanup();
-      resolve(null);
+      finish(null);
     };
 
+    timeoutId = window.setTimeout(() => {
+      finish(null);
+    }, 10_000);
+
     video.src = videoUrl;
+    video.load();
   });
 }

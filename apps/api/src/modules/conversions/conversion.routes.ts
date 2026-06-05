@@ -198,6 +198,23 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     return reply.send(createReadStream(download.path));
   });
 
+  server.get<{ Params: CloudJobParams }>('/api/conversions/cloud-jobs/:jobId/preview-photo', async (request, reply) => {
+    const download = await conversionService.getPreviewPhotoDownload(request.params.jobId);
+
+    if (!download) {
+      return reply.status(404).send({
+        code: 'preview-photo-not-ready',
+        message: 'Preview photo artifact is not ready, expired, or deleted.',
+      });
+    }
+
+    reply.header('Content-Type', 'image/jpeg');
+    reply.header('Content-Length', download.sizeBytes.toString());
+    reply.header('Content-Disposition', `inline; filename="${download.fileName}"`);
+
+    return reply.send(createReadStream(download.path));
+  });
+
   server.delete<{ Params: CloudJobParams }>('/api/conversions/cloud-jobs/:jobId', async (request, reply) => {
     const job = await conversionService.deleteCloudJob(request.params.jobId);
 
