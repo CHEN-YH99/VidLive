@@ -363,21 +363,23 @@ export function VidLiveTool() {
     }
 
     let cancelled = false;
-
-    captureCoverFrame(previewUrl, draft.keyframeSeconds).then((frame) => {
-      if (!cancelled) {
-        setCoverUrl(frame);
-        setPreviewPlaybackFailed((current) => current || !frame);
-      }
-    }).catch(() => {
-      if (!cancelled) {
-        setCoverUrl(null);
-        setPreviewPlaybackFailed(true);
-      }
-    });
+    const coverTimer = window.setTimeout(() => {
+      captureCoverFrame(previewUrl, draft.keyframeSeconds).then((frame) => {
+        if (!cancelled) {
+          setCoverUrl(frame);
+          setPreviewPlaybackFailed((current) => current || !frame);
+        }
+      }).catch(() => {
+        if (!cancelled) {
+          setCoverUrl(null);
+          setPreviewPlaybackFailed(true);
+        }
+      });
+    }, 260);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(coverTimer);
     };
   }, [draft.keyframeSeconds, file, previewUrl]);
 
@@ -1740,7 +1742,7 @@ function RangeField({
         max={safeMax}
         step={step}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full accent-[#ff715b]"
+        className="h-7 w-full accent-[#ff715b]"
       />
     </label>
   );
