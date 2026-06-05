@@ -111,6 +111,11 @@ interface CloudJob {
     sizeBytes: number;
     downloadUrl: string;
   } | null;
+  pairedVideo: {
+    fileName: string;
+    sizeBytes: number;
+    downloadUrl: string;
+  } | null;
   warnings: string[];
   error: {
     code: string;
@@ -197,6 +202,43 @@ function toApiUrl(value: string): string {
   }
 
   return `${apiBaseUrl}${value}`;
+}
+
+async function fetchShareFile(url: string, fileName: string, fallbackType: string): Promise<File> {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error('share-file-download-failed');
+  }
+
+  const blob = await response.blob();
+  return new File([blob], fileName, { type: blob.type || fallbackType });
+}
+
+async function shareAppleLivePhotoFiles(photoUrl: string, videoUrl: string): Promise<boolean> {
+  if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') {
+    return false;
+  }
+
+  try {
+    const files = await Promise.all([
+      fetchShareFile(photoUrl, 'photo.jpg', 'image/jpeg'),
+      fetchShareFile(videoUrl, 'video.mov', 'video/quicktime'),
+    ]);
+    const shareData: ShareData = {
+      files,
+      title: 'VidLive 苹果实况素材',
+    };
+
+    if (!navigator.canShare(shareData)) {
+      return false;
+    }
+
+    await navigator.share(shareData);
+    return true;
+  } catch (error) {
+    return error instanceof DOMException && error.name === 'AbortError';
+  }
 }
 
 function createCloudQuery(draft: ConversionDraft): string {
@@ -949,6 +991,22 @@ export function VidLiveTool() {
                   onDownload={(url) => {
                     window.location.assign(toApiUrl(url));
                   }}
+                  onAppleDownload={async () => {
+                    if (cloudJob.previewPhoto && cloudJob.pairedVideo) {
+                      const shared = await shareAppleLivePhotoFiles(
+                        toApiUrl(cloudJob.previewPhoto.downloadUrl),
+                        toApiUrl(cloudJob.pairedVideo.downloadUrl),
+                      );
+
+                      if (shared) {
+                        return;
+                      }
+                    }
+
+                    if (cloudJob.artifact) {
+                      window.location.assign(toApiUrl(cloudJob.artifact.downloadUrl));
+                    }
+                  }}
                   onDelete={async () => {
                     await fetch(toApiUrl(`/api/conversions/cloud-jobs/${cloudJob.id}`), {
                       method: 'DELETE',
@@ -1298,6 +1356,7 @@ function CloudJobPanel({
   androidMotionPhotoUrl,
   previewPhotoUrl,
   onDownload,
+  onAppleDownload,
   onDelete,
 }: {
   job: CloudJob;
@@ -1305,9 +1364,11 @@ function CloudJobPanel({
   androidMotionPhotoUrl: string | null;
   previewPhotoUrl: string | null;
   onDownload: (url: string) => void;
+  onAppleDownload: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
   const [qrPreview, setQrPreview] = useState<{ downloadUrl: string; dataUrl: string } | null>(null);
+  const [appleDownloadBusy, setAppleDownloadBusy] = useState(false);
   const statusCopy: Record<CloudJobStatus, string> = {
     queued: '排队中',
     processing: '处理中',
@@ -1318,6 +1379,7 @@ function CloudJobPanel({
   };
   const canDownload = job.status === 'completed' && Boolean(job.artifact);
   const canDownloadAndroidMotionPhoto = job.status === 'completed' && Boolean(job.androidMotionPhoto);
+  const canDownloadAppleLivePhoto = job.status === 'completed' && Boolean(job.artifact || (job.previewPhoto && job.pairedVideo));
   const canPreviewPhoto = job.status === 'completed' && Boolean(job.previewPhoto) && Boolean(previewPhotoUrl);
   const activeDownloadUrl = canDownloadAndroidMotionPhoto ? androidMotionPhotoUrl : canDownload ? downloadUrl : null;
   const qrDataUrl = qrPreview?.downloadUrl === activeDownloadUrl ? qrPreview.dataUrl : null;
@@ -1369,7 +1431,7 @@ function CloudJobPanel({
         <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#fff4df] p-3">
           <p className="text-xs font-black text-ink">实况识别说明</p>
           <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
-            安卓优先下载单文件动图；ZIP 保留 iOS 配对素材、manifest 和兜底格式。
+            安卓优先下载单文件动图；苹果按钮会优先调系统分享，网页不能直接写入 iOS 相册 LIVE。
           </p>
         </div>
       )}
@@ -1419,7 +1481,7 @@ function CloudJobPanel({
         </div>
       )}
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <button
           type="button"
           disabled={!canDownloadAndroidMotionPhoto}
@@ -1432,6 +1494,20 @@ function CloudJobPanel({
         >
           <ImageIcon size={16} />
           下载安卓动图
+        </button>
+        <button
+          type="button"
+          disabled={!canDownloadAppleLivePhoto || appleDownloadBusy}
+          onClick={() => {
+            setAppleDownloadBusy(true);
+            void onAppleDownload().finally(() => {
+              setAppleDownloadBusy(false);
+            });
+          }}
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#6aa9ff] px-3 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+        >
+          {appleDownloadBusy ? <Loader2 size={16} className="animate-spin" /> : <Smartphone size={16} />}
+          苹果实况素材
         </button>
         <button
           type="button"

@@ -215,6 +215,23 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     return reply.send(createReadStream(download.path));
   });
 
+  server.get<{ Params: CloudJobParams }>('/api/conversions/cloud-jobs/:jobId/paired-video', async (request, reply) => {
+    const download = await conversionService.getPairedVideoDownload(request.params.jobId);
+
+    if (!download) {
+      return reply.status(404).send({
+        code: 'paired-video-not-ready',
+        message: 'Paired Live Photo video artifact is not ready, expired, or deleted.',
+      });
+    }
+
+    reply.header('Content-Type', 'video/quicktime');
+    reply.header('Content-Length', download.sizeBytes.toString());
+    reply.header('Content-Disposition', `attachment; filename="${download.fileName}"`);
+
+    return reply.send(createReadStream(download.path));
+  });
+
   server.delete<{ Params: CloudJobParams }>('/api/conversions/cloud-jobs/:jobId', async (request, reply) => {
     const job = await conversionService.deleteCloudJob(request.params.jobId);
 

@@ -27,7 +27,7 @@ export interface CloudConversionArtifact {
 }
 
 export interface CloudConversionDirectArtifact {
-  kind: 'android-motion-photo' | 'preview-photo';
+  kind: 'android-motion-photo' | 'preview-photo' | 'paired-video';
   fileName: string;
   sizeBytes: number;
   downloadUrl: string;
@@ -50,6 +50,7 @@ export interface CloudConversionJob {
   artifact: CloudConversionArtifact | null;
   androidMotionPhoto: CloudConversionDirectArtifact | null;
   previewPhoto: CloudConversionDirectArtifact | null;
+  pairedVideo: CloudConversionDirectArtifact | null;
   warnings: string[];
   error: {
     code: string;
@@ -83,6 +84,7 @@ interface CloudConversionJobRecord extends CloudConversionJob {
   zipPath: string | null;
   motionPhotoPath: string | null;
   previewPhotoPath: string | null;
+  pairedVideoPath: string | null;
 }
 
 interface CloudQueueResult {
@@ -94,6 +96,8 @@ interface CloudQueueResult {
   androidMotionPhoto: CloudConversionDirectArtifact | null;
   previewPhotoPath: string | null;
   previewPhoto: CloudConversionDirectArtifact | null;
+  pairedVideoPath: string | null;
+  pairedVideo: CloudConversionDirectArtifact | null;
 }
 
 interface ConversionLogger {
@@ -195,6 +199,7 @@ export class ConversionService {
       artifact: null,
       androidMotionPhoto: null,
       previewPhoto: null,
+      pairedVideo: null,
       warnings: [],
       error: null,
       sourcePath: input.sourcePath,
@@ -202,6 +207,7 @@ export class ConversionService {
       zipPath: null,
       motionPhotoPath: null,
       previewPhotoPath: null,
+      pairedVideoPath: null,
     };
 
     this.jobs.set(id, job);
@@ -288,6 +294,28 @@ export class ConversionService {
     };
   }
 
+  async getPairedVideoDownload(id: string): Promise<{ path: string; fileName: string; sizeBytes: number } | null> {
+    this.cleanupExpiredJobs();
+
+    const job = this.jobs.get(id);
+    const queueJob = await this.getBullMqJob(id);
+    const queueResult = isCompletedQueueJob(queueJob) ? queueJob.returnvalue : null;
+    const pairedVideoPath = job?.pairedVideoPath ?? queueResult?.pairedVideoPath ?? null;
+    const artifact = job?.pairedVideo ?? queueResult?.pairedVideo ?? null;
+
+    if (!pairedVideoPath || !artifact) {
+      return null;
+    }
+
+    const fileStat = await stat(pairedVideoPath);
+
+    return {
+      path: pairedVideoPath,
+      fileName: artifact.fileName,
+      sizeBytes: fileStat.size,
+    };
+  }
+
   async getAndroidMotionPhotoDownload(id: string): Promise<{ path: string; fileName: string; sizeBytes: number } | null> {
     this.cleanupExpiredJobs();
 
@@ -334,6 +362,11 @@ export class ConversionService {
       job.previewPhotoPath = queueResult.previewPhotoPath;
     }
 
+    if (queueResult?.pairedVideo && !job.pairedVideo) {
+      job.pairedVideo = queueResult.pairedVideo;
+      job.pairedVideoPath = queueResult.pairedVideoPath;
+    }
+
     await this.removeJobFiles(job);
     job.status = 'deleted';
     job.progress = 100;
@@ -341,9 +374,11 @@ export class ConversionService {
     job.artifact = null;
     job.androidMotionPhoto = null;
     job.previewPhoto = null;
+    job.pairedVideo = null;
     job.zipPath = null;
     job.motionPhotoPath = null;
     job.previewPhotoPath = null;
+    job.pairedVideoPath = null;
     this.jobs.delete(id);
     await queueJob?.remove();
     this.logger?.info({ jobId: id }, 'Cloud conversion job deleted.');
@@ -394,9 +429,11 @@ export class ConversionService {
       job.artifact = null;
       job.androidMotionPhoto = null;
       job.previewPhoto = null;
+      job.pairedVideo = null;
       job.zipPath = null;
       job.motionPhotoPath = null;
       job.previewPhotoPath = null;
+      job.pairedVideoPath = null;
       void this.removeJobFiles(job);
     }
   }
@@ -474,6 +511,12 @@ export class ConversionService {
         sizeBytes: (await stat(result.photoPath)).size,
         downloadUrl: `/api/conversions/cloud-jobs/${job.id}/preview-photo`,
       };
+      const pairedVideo: CloudConversionDirectArtifact = {
+        kind: 'paired-video',
+        fileName: 'video.mov',
+        sizeBytes: (await stat(result.movPath)).size,
+        downloadUrl: `/api/conversions/cloud-jobs/${job.id}/paired-video`,
+      };
 
       updateJob(job, {
         status: 'completed',
@@ -483,9 +526,11 @@ export class ConversionService {
         zipPath: result.zipPath,
         motionPhotoPath: result.androidMotionPhotoPath,
         previewPhotoPath: result.photoPath,
+        pairedVideoPath: result.movPath,
         artifact,
         androidMotionPhoto,
         previewPhoto,
+        pairedVideo,
       });
       this.logger?.info(
         { jobId: job.id, storageProvider: artifact.storageProvider, sizeBytes: artifact.sizeBytes },
@@ -501,6 +546,8 @@ export class ConversionService {
         androidMotionPhoto,
         previewPhotoPath: result.photoPath,
         previewPhoto,
+        pairedVideoPath: result.movPath,
+        pairedVideo,
       };
     } catch (error) {
       updateJob(job, {
@@ -539,9 +586,11 @@ export class ConversionService {
       artifact: result?.artifact ?? record.artifact,
       androidMotionPhoto: result?.androidMotionPhoto ?? record.androidMotionPhoto,
       previewPhoto: result?.previewPhoto ?? record.previewPhoto,
+      pairedVideo: result?.pairedVideo ?? record.pairedVideo,
       zipPath: result?.zipPath ?? record.zipPath,
       motionPhotoPath: result?.motionPhotoPath ?? record.motionPhotoPath,
       previewPhotoPath: result?.previewPhotoPath ?? record.previewPhotoPath,
+      pairedVideoPath: result?.pairedVideoPath ?? record.pairedVideoPath,
       error:
         status === 'failed'
           ? {
@@ -594,6 +643,7 @@ function toPublicJob(job: CloudConversionJobRecord): CloudConversionJob {
     artifact: job.artifact,
     androidMotionPhoto: job.androidMotionPhoto,
     previewPhoto: job.previewPhoto,
+    pairedVideo: job.pairedVideo,
     warnings: job.warnings,
     error: job.error,
   };
