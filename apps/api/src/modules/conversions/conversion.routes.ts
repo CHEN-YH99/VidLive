@@ -96,6 +96,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
         createJob: '/api/conversions/cloud-jobs',
         getJob: '/api/conversions/cloud-jobs/:jobId',
         download: '/api/conversions/cloud-jobs/:jobId/download',
+        androidMotionPhoto: '/api/conversions/cloud-jobs/:jobId/android-motion-photo',
         delete: '/api/conversions/cloud-jobs/:jobId',
       },
     };
@@ -174,6 +175,23 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     }
 
     reply.header('Content-Type', 'application/zip');
+    reply.header('Content-Length', download.sizeBytes.toString());
+    reply.header('Content-Disposition', `attachment; filename="${download.fileName}"`);
+
+    return reply.send(createReadStream(download.path));
+  });
+
+  server.get<{ Params: CloudJobParams }>('/api/conversions/cloud-jobs/:jobId/android-motion-photo', async (request, reply) => {
+    const download = await conversionService.getAndroidMotionPhotoDownload(request.params.jobId);
+
+    if (!download) {
+      return reply.status(404).send({
+        code: 'android-motion-photo-not-ready',
+        message: 'Android Motion Photo artifact is not ready, expired, or deleted.',
+      });
+    }
+
+    reply.header('Content-Type', 'image/jpeg');
     reply.header('Content-Length', download.sizeBytes.toString());
     reply.header('Content-Disposition', `attachment; filename="${download.fileName}"`);
 

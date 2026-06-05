@@ -26,6 +26,13 @@ export interface CloudConversionArtifact {
   signedUrlExpiresAt: string | null;
 }
 
+export interface CloudConversionDirectArtifact {
+  kind: 'android-motion-photo';
+  fileName: string;
+  sizeBytes: number;
+  downloadUrl: string;
+}
+
 export interface CloudConversionJob {
   id: string;
   status: CloudConversionStatus;
@@ -41,6 +48,7 @@ export interface CloudConversionJob {
   expiresAt: string;
   probe: ProbeResult | null;
   artifact: CloudConversionArtifact | null;
+  androidMotionPhoto: CloudConversionDirectArtifact | null;
   warnings: string[];
   error: {
     code: string;
@@ -72,6 +80,7 @@ interface CloudConversionJobRecord extends CloudConversionJob {
   sourcePath: string;
   workDir: string;
   zipPath: string | null;
+  motionPhotoPath: string | null;
 }
 
 interface CloudQueueResult {
@@ -79,6 +88,8 @@ interface CloudQueueResult {
   warnings: string[];
   zipPath: string;
   artifact: CloudConversionArtifact;
+  motionPhotoPath: string | null;
+  androidMotionPhoto: CloudConversionDirectArtifact | null;
 }
 
 interface ConversionLogger {
@@ -178,11 +189,13 @@ export class ConversionService {
       expiresAt: expiresAt.toISOString(),
       probe: null,
       artifact: null,
+      androidMotionPhoto: null,
       warnings: [],
       error: null,
       sourcePath: input.sourcePath,
       workDir: input.workDir,
       zipPath: null,
+      motionPhotoPath: null,
     };
 
     this.jobs.set(id, job);
@@ -247,6 +260,28 @@ export class ConversionService {
     };
   }
 
+  async getAndroidMotionPhotoDownload(id: string): Promise<{ path: string; fileName: string; sizeBytes: number } | null> {
+    this.cleanupExpiredJobs();
+
+    const job = this.jobs.get(id);
+    const queueJob = await this.getBullMqJob(id);
+    const queueResult = isCompletedQueueJob(queueJob) ? queueJob.returnvalue : null;
+    const motionPhotoPath = job?.motionPhotoPath ?? queueResult?.motionPhotoPath ?? null;
+    const artifact = job?.androidMotionPhoto ?? queueResult?.androidMotionPhoto ?? null;
+
+    if (!motionPhotoPath || !artifact) {
+      return null;
+    }
+
+    const fileStat = await stat(motionPhotoPath);
+
+    return {
+      path: motionPhotoPath,
+      fileName: artifact.fileName,
+      sizeBytes: fileStat.size,
+    };
+  }
+
   async deleteCloudJob(id: string): Promise<CloudConversionJob | null> {
     const queueJob = await this.getBullMqJob(id);
     const queueResult = isCompletedQueueJob(queueJob) ? queueJob.returnvalue : null;
@@ -261,12 +296,19 @@ export class ConversionService {
       job.zipPath = queueResult.zipPath;
     }
 
+    if (queueResult?.androidMotionPhoto && !job.androidMotionPhoto) {
+      job.androidMotionPhoto = queueResult.androidMotionPhoto;
+      job.motionPhotoPath = queueResult.motionPhotoPath;
+    }
+
     await this.removeJobFiles(job);
     job.status = 'deleted';
     job.progress = 100;
     job.updatedAt = new Date().toISOString();
     job.artifact = null;
+    job.androidMotionPhoto = null;
     job.zipPath = null;
+    job.motionPhotoPath = null;
     this.jobs.delete(id);
     await queueJob?.remove();
     this.logger?.info({ jobId: id }, 'Cloud conversion job deleted.');
@@ -315,7 +357,9 @@ export class ConversionService {
       job.progress = 100;
       job.updatedAt = new Date().toISOString();
       job.artifact = null;
+      job.androidMotionPhoto = null;
       job.zipPath = null;
+      job.motionPhotoPath = null;
       void this.removeJobFiles(job);
     }
   }
@@ -379,6 +423,14 @@ export class ConversionService {
         objectKey: storedArtifact.objectKey,
         signedUrlExpiresAt: storedArtifact.signedUrlExpiresAt,
       };
+      const androidMotionPhoto: CloudConversionDirectArtifact | null = result.androidMotionPhotoPath
+        ? {
+            kind: 'android-motion-photo',
+            fileName: 'motion-photo_MP.jpg',
+            sizeBytes: (await stat(result.androidMotionPhotoPath)).size,
+            downloadUrl: `/api/conversions/cloud-jobs/${job.id}/android-motion-photo`,
+          }
+        : null;
 
       updateJob(job, {
         status: 'completed',
@@ -386,7 +438,9 @@ export class ConversionService {
         probe: result.probe,
         warnings: result.warnings,
         zipPath: result.zipPath,
+        motionPhotoPath: result.androidMotionPhotoPath,
         artifact,
+        androidMotionPhoto,
       });
       this.logger?.info(
         { jobId: job.id, storageProvider: artifact.storageProvider, sizeBytes: artifact.sizeBytes },
@@ -398,6 +452,8 @@ export class ConversionService {
         warnings: result.warnings,
         zipPath: result.zipPath,
         artifact,
+        motionPhotoPath: result.androidMotionPhotoPath,
+        androidMotionPhoto,
       };
     } catch (error) {
       updateJob(job, {
@@ -434,7 +490,9 @@ export class ConversionService {
       probe: result?.probe ?? record.probe,
       warnings: result?.warnings ?? record.warnings,
       artifact: result?.artifact ?? record.artifact,
+      androidMotionPhoto: result?.androidMotionPhoto ?? record.androidMotionPhoto,
       zipPath: result?.zipPath ?? record.zipPath,
+      motionPhotoPath: result?.motionPhotoPath ?? record.motionPhotoPath,
       error:
         status === 'failed'
           ? {
@@ -485,6 +543,7 @@ function toPublicJob(job: CloudConversionJobRecord): CloudConversionJob {
     expiresAt: job.expiresAt,
     probe: job.probe,
     artifact: job.artifact,
+    androidMotionPhoto: job.androidMotionPhoto,
     warnings: job.warnings,
     error: job.error,
   };

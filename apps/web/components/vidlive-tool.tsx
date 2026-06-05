@@ -101,6 +101,11 @@ interface CloudJob {
     downloadUrl: string;
     deleteUrl: string;
   } | null;
+  androidMotionPhoto: {
+    fileName: string;
+    sizeBytes: number;
+    downloadUrl: string;
+  } | null;
   warnings: string[];
   error: {
     code: string;
@@ -130,6 +135,18 @@ function getDropError(rejections: FileRejection[]): FailureReason | null {
   }
 
   return 'unsupported-format';
+}
+
+function createCloudFallbackMetadata(file: File, presetId: ExportPresetId): VideoMetadata {
+  return {
+    name: file.name,
+    sizeBytes: file.size,
+    mimeType: file.type || 'video/unknown',
+    durationSeconds: exportPresets[presetId].defaultDurationSeconds,
+    width: null,
+    height: null,
+    hasAudio: null,
+  };
 }
 
 function getDefaultDraftForPreset(
@@ -296,6 +313,10 @@ export function VidLiveTool() {
       if (!cancelled) {
         setCoverUrl(frame);
       }
+    }).catch(() => {
+      if (!cancelled) {
+        setCoverUrl(null);
+      }
     });
 
     return () => {
@@ -360,8 +381,28 @@ export function VidLiveTool() {
           mode: shouldUseCloud ? 'cloud' : 'local',
         }));
       } catch {
-        URL.revokeObjectURL(objectUrl);
-        setFailureReason('metadata-read-failed');
+        if (isGif(selectedFile)) {
+          URL.revokeObjectURL(objectUrl);
+          setFailureReason('metadata-read-failed');
+          return;
+        }
+
+        const fallbackMetadata = createCloudFallbackMetadata(selectedFile, draft.presetId);
+
+        setFile(selectedFile);
+        setMetadata(fallbackMetadata);
+        setPreviewUrl((current) => {
+          if (current) {
+            URL.revokeObjectURL(current);
+          }
+
+          return objectUrl;
+        });
+        setDraft((current) => ({
+          ...getDefaultDraftForPreset(draft.presetId, current, fallbackMetadata),
+          mode: 'cloud',
+        }));
+        setFailureReason('cloud-required');
       } finally {
         setIsReading(false);
       }
@@ -890,6 +931,9 @@ export function VidLiveTool() {
                 <CloudJobPanel
                   job={cloudJob}
                   downloadUrl={cloudJob.artifact ? toApiUrl(cloudJob.artifact.downloadUrl) : null}
+                  androidMotionPhotoUrl={
+                    cloudJob.androidMotionPhoto ? toApiUrl(cloudJob.androidMotionPhoto.downloadUrl) : null
+                  }
                   onDownload={(url) => {
                     window.location.assign(toApiUrl(url));
                   }}
@@ -1197,11 +1241,13 @@ function ExportResultPanel({
 function CloudJobPanel({
   job,
   downloadUrl,
+  androidMotionPhotoUrl,
   onDownload,
   onDelete,
 }: {
   job: CloudJob;
   downloadUrl: string | null;
+  androidMotionPhotoUrl: string | null;
   onDownload: (url: string) => void;
   onDelete: () => Promise<void>;
 }) {
@@ -1215,7 +1261,8 @@ function CloudJobPanel({
     deleted: '已删除',
   };
   const canDownload = job.status === 'completed' && Boolean(job.artifact);
-  const activeDownloadUrl = canDownload ? downloadUrl : null;
+  const canDownloadAndroidMotionPhoto = job.status === 'completed' && Boolean(job.androidMotionPhoto);
+  const activeDownloadUrl = canDownloadAndroidMotionPhoto ? androidMotionPhotoUrl : canDownload ? downloadUrl : null;
   const qrDataUrl = qrPreview?.downloadUrl === activeDownloadUrl ? qrPreview.dataUrl : null;
 
   useEffect(() => {
@@ -1265,7 +1312,7 @@ function CloudJobPanel({
         <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#fff4df] p-3">
           <p className="text-xs font-black text-ink">实况识别说明</p>
           <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
-            云端 ZIP 是带元数据尝试的配对素材包；Safari 直接下载仍不会自动写入相册，需通过 AirDrop、Shortcuts 或真机导入路径复测。
+            安卓优先下载单文件动图；ZIP 保留 iOS 配对素材、manifest 和兜底格式。
           </p>
         </div>
       )}
@@ -1301,7 +1348,20 @@ function CloudJobPanel({
         </div>
       )}
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <button
+          type="button"
+          disabled={!canDownloadAndroidMotionPhoto}
+          onClick={() => {
+            if (job.androidMotionPhoto) {
+              onDownload(job.androidMotionPhoto.downloadUrl);
+            }
+          }}
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#ff715b] px-3 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+        >
+          <ImageIcon size={16} />
+          下载安卓动图
+        </button>
         <button
           type="button"
           disabled={!canDownload}
