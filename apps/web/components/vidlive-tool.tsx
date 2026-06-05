@@ -856,6 +856,8 @@ export function VidLiveTool() {
             </div>
 
             <aside className="flex min-w-0 flex-col gap-4">
+              <SidebarInfoCarousel />
+
               <Panel title="处理模式" icon={<CloudOff size={18} />}>
                 <div className="grid grid-cols-2 gap-2">
                   <ModeButton
@@ -1087,46 +1089,6 @@ export function VidLiveTool() {
             </aside>
           </div>
 
-          <section className="grid gap-4 lg:grid-cols-3">
-            <Panel title="Phase 1 闭环" icon={<BadgeCheck size={18} />}>
-              <div className="grid grid-cols-4 gap-2">
-                {phaseSteps.map((step) => (
-                  <div
-                    key={step.label}
-                    className="flex min-h-16 flex-col items-center justify-center rounded-lg border-2 border-ink/15 bg-white text-xs font-black text-ink"
-                  >
-                    {step.icon}
-                    <span className="mt-1">{step.label}</span>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-
-            <Panel title="Pro 验证" icon={<BadgeCheck size={18} />}>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                <div className="rounded-lg border-2 border-ink/15 bg-white p-3">
-                  <p className="text-sm font-black text-ink">Free</p>
-                  <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、本地素材包、标准预设。</p>
-                </div>
-                <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-3 shadow-clay-sm">
-                  <p className="text-sm font-black text-ink">Pro Monthly</p>
-                  <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
-                    批量处理、4K 输出、云端优先队列、历史记录。
-                  </p>
-                </div>
-              </div>
-            </Panel>
-
-            <Panel title="扩展工具箱" icon={<Film size={18} />}>
-              <div className="grid gap-2">
-                <ToolboxItem label="Video/GIF to Live Photo 素材包" status="available" />
-                <ToolboxItem label="相册 Live Photo 写入" status="preview" />
-                <ToolboxItem label="Live Photo to GIF/MP4" status="preview" />
-                <ToolboxItem label="Image to Live Photo" status="preview" />
-                <ToolboxItem label="AI Image Motion" status="planned" />
-              </div>
-            </Panel>
-          </section>
         </div>
       </section>
     </main>
@@ -1405,6 +1367,148 @@ function SavePathPanel({ presetId }: { presetId: ExportPresetId }) {
         <p className="mt-1">{activeItem.text}</p>
       </div>
     </section>
+  );
+}
+
+function SidebarInfoCarousel() {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const slides = [
+    {
+      id: 'phase',
+      title: '操作步骤',
+      icon: <BadgeCheck size={18} />,
+      content: (
+        <div className="grid h-full grid-rows-4 gap-2">
+          {phaseSteps.map((step, index) => (
+            <div
+              key={step.label}
+              className="flex items-center gap-3 rounded-lg border-2 border-ink/15 bg-white px-3 text-sm font-black text-ink"
+            >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ink/15 bg-[#e4f7ff] text-xs">
+                {index + 1}
+              </span>
+              <span className="shrink-0 text-[#23b7a4]">{step.icon}</span>
+              <span>{step.label}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: 'pro',
+      title: 'Pro 验证',
+      icon: <BadgeCheck size={18} />,
+      content: (
+        <div className="grid h-full grid-rows-2 gap-2">
+          <div className="flex flex-col justify-center rounded-lg border-2 border-ink/15 bg-white p-3">
+            <p className="text-sm font-black text-ink">Free</p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、本地素材包、标准预设。</p>
+          </div>
+          <div className="flex flex-col justify-center rounded-lg border-2 border-ink bg-[#d9f99d] p-3 shadow-clay-sm">
+            <p className="text-sm font-black text-ink">Pro Monthly</p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
+              批量处理、4K 输出、云端优先队列、历史记录。
+            </p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'toolbox',
+      title: '扩展工具箱',
+      icon: <Film size={18} />,
+      content: (
+        <div className="grid h-full grid-rows-5 gap-1.5">
+          <ToolboxMiniItem label="Video/GIF to Live Photo 素材包" status="available" />
+          <ToolboxMiniItem label="相册 Live Photo 写入" status="preview" />
+          <ToolboxMiniItem label="Live Photo to GIF/MP4" status="preview" />
+          <ToolboxMiniItem label="Image to Live Photo" status="preview" />
+          <ToolboxMiniItem label="AI Image Motion" status="planned" />
+        </div>
+      ),
+    },
+  ];
+  const activeSlide = slides[activeIndex] ?? slides[0];
+
+  useEffect(() => {
+    if (isPaused) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setActiveIndex((current) => (current + 1) % slides.length);
+    }, 4600);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isPaused, slides.length]);
+
+  if (!activeSlide) {
+    return null;
+  }
+
+  return (
+    <section
+      aria-label="产品信息轮播"
+      tabIndex={0}
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      onFocus={() => setIsPaused(true)}
+      onBlur={() => setIsPaused(false)}
+      className="clay-card bg-white p-4 focus:outline-none"
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-black text-ink">
+          <span className="text-[#ff715b]">{activeSlide.icon}</span>
+          {activeSlide.title}
+        </div>
+        <div className="flex gap-1" aria-label="产品信息切换">
+          {slides.map((slide, index) => (
+            <button
+              key={slide.id}
+              type="button"
+              aria-label={`切换到 ${slide.title}`}
+              onClick={() => setActiveIndex(index)}
+              className={[
+                'h-2.5 rounded-full border border-ink/20 transition-all',
+                activeIndex === index ? 'w-5 bg-[#23b7a4]' : 'w-2.5 bg-ink/20 hover:bg-ink/35',
+              ].join(' ')}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="h-44 overflow-hidden rounded-lg">
+        <div
+          className="flex h-full will-change-transform transition-transform duration-500 ease-out motion-reduce:transition-none"
+          style={{ transform: `translateX(-${activeIndex * 100}%)` }}
+        >
+          {slides.map((slide) => (
+            <div key={slide.id} className="h-full w-full flex-none">
+              {slide.content}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ToolboxMiniItem({ label, status }: { label: string; status: 'available' | 'preview' | 'planned' }) {
+  const statusClass = {
+    available: 'bg-[#d9f99d]',
+    preview: 'bg-[#e4f7ff]',
+    planned: 'bg-[#fff4df]',
+  }[status];
+
+  return (
+    <div className="flex h-full items-center justify-between gap-2 rounded-lg border border-ink/15 bg-white px-2 py-1">
+      <span className="truncate text-xs font-black text-ink">{label}</span>
+      <span className={`shrink-0 rounded-md border border-ink/15 px-2 py-0.5 text-[10px] font-black text-ink/65 ${statusClass}`}>
+        {status}
+      </span>
+    </div>
   );
 }
 
@@ -1911,23 +2015,6 @@ function ToggleButton({ active, label, onClick }: { active: boolean; label: stri
     >
       {label}
     </button>
-  );
-}
-
-function ToolboxItem({ label, status }: { label: string; status: 'available' | 'preview' | 'planned' }) {
-  const statusClass = {
-    available: 'bg-[#d9f99d]',
-    preview: 'bg-[#e4f7ff]',
-    planned: 'bg-[#fff4df]',
-  }[status];
-
-  return (
-    <div className="flex min-h-12 items-center justify-between gap-3 rounded-lg border-2 border-ink/15 bg-white p-3">
-      <span className="text-sm font-black text-ink">{label}</span>
-      <span className={`rounded-lg border border-ink/15 px-2 py-1 text-xs font-black text-ink/65 ${statusClass}`}>
-        {status}
-      </span>
-    </div>
   );
 }
 

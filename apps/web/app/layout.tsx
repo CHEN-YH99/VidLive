@@ -4,6 +4,9 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'VidLive',
   description: 'Local-first Live Photo conversion tool.',
+  icons: {
+    icon: [{ url: '/images/01.webp', type: 'image/webp' }],
+  },
 };
 
 export const viewport: Viewport = {
