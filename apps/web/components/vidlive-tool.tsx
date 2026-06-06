@@ -1764,7 +1764,7 @@ function GenerationStatusButton({
       type="button"
       aria-live="polite"
       onClick={onClick}
-      className={`fixed bottom-4 left-4 z-40 inline-flex h-11 max-w-[calc(100vw-2rem)] items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 text-xs font-black shadow-clay transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#23b7a4] ${copy.className}`}
+      className={`fixed bottom-20 left-4 z-40 inline-flex h-11 max-w-[calc(100vw-2rem)] items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 text-xs font-black shadow-clay transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#23b7a4] lg:bottom-4 ${copy.className}`}
     >
       {copy.icon}
       <span>{copy.label}</span>
@@ -1945,7 +1945,7 @@ function CompatibilityLabTriggerButton({
     <button
       type="button"
       onClick={onClick}
-      className="fixed bottom-4 right-4 z-40 inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#23b7a4]"
+      className="fixed bottom-20 right-4 z-40 inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#23b7a4] lg:bottom-4"
     >
       <BadgeCheck size={15} className="text-[#23b7a4]" />
       {reportCountLabel}
