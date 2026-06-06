@@ -96,15 +96,15 @@ const backgroundColorOptions = [
 ] as const;
 
 const modeHelpText = {
-  local: '只在浏览器内解析和打包，不上传素材；适合快速预览和普通素材包。受浏览器能力限制，实况元数据兼容性不如云端。',
+  local: '只在浏览器内解析和打包，不上传素材；适合快速预览和普通素材包。安卓实况单文件以云端结果为准。',
   cloud:
-    '把素材提交到后端处理，用 FFmpeg 和元数据链路生成 Apple / Android 兼容产物；适合最终导出和真机验证。',
+    '把素材提交到后端处理，用 FFmpeg 生成 Android Motion Photo 单文件、预览图和完整素材包；适合最终导出和真机验证。',
 } as const;
 
 const presetHelpText: Record<ExportPresetId, string> = {
-  'standard-live-photo': '默认 3 秒，优先保留原素材比例，适合做相册或 Google Photos 的标准实况/动图兼容验证。',
-  'ios-lock-screen': '默认 2 秒，优先 9:16 竖屏和锁屏壁纸兼容；需要抖音或 iOS 锁屏识别更稳时优先选它。',
-  'social-fallback': '输出 MP4 / GIF / WebP 等兜底格式，不追求严格实况配对；适合社交平台无法识别实况时保底发布。',
+  'standard-live-photo': '默认 3 秒，优先保留原素材比例，适合 Google Photos 或系统相册的标准动态照片验证。',
+  'ios-lock-screen': '默认 2 秒，优先 9:16 竖屏，适合安卓系统相册识别和手机壁纸素材验证。',
+  'social-fallback': '输出 MP4 / GIF / WebP 等兜底格式，不追求严格实况结构；适合社交平台无法识别动态照片时发布。',
 };
 
 type CloudJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
@@ -216,49 +216,32 @@ function isCloudJobActive(job: CloudJob | null): boolean {
   return job?.status === 'queued' || job?.status === 'processing';
 }
 
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+}
+
 function toApiUrl(value: string): string {
   if (value.startsWith('http://') || value.startsWith('https://')) {
     return value;
   }
 
-  return `${apiBaseUrl}${value}`;
-}
+  const normalizedBase = apiBaseUrl.replace(/\/$/, '');
+  const normalizedValue = value.startsWith('/') ? value : `/${value}`;
 
-async function fetchShareFile(url: string, fileName: string, fallbackType: string): Promise<File> {
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error('share-file-download-failed');
+  if (!normalizedBase) {
+    return normalizedValue;
   }
 
-  const blob = await response.blob();
-  return new File([blob], fileName, { type: blob.type || fallbackType });
-}
-
-async function shareAppleLivePhotoFiles(photoUrl: string, videoUrl: string): Promise<boolean> {
-  if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') {
-    return false;
+  if (
+    normalizedBase.startsWith('/') &&
+    (normalizedValue === normalizedBase || normalizedValue.startsWith(`${normalizedBase}/`))
+  ) {
+    return normalizedValue;
   }
 
-  try {
-    const files = await Promise.all([
-      fetchShareFile(photoUrl, 'photo.jpg', 'image/jpeg'),
-      fetchShareFile(videoUrl, 'video.mov', 'video/quicktime'),
-    ]);
-    const shareData: ShareData = {
-      files,
-      title: 'VidLive 苹果实况素材',
-    };
-
-    if (!navigator.canShare(shareData)) {
-      return false;
-    }
-
-    await navigator.share(shareData);
-    return true;
-  } catch (error) {
-    return error instanceof DOMException && error.name === 'AbortError';
-  }
+  return `${normalizedBase}${normalizedValue}`;
 }
 
 function createCloudQuery(draft: ConversionDraft): string {
@@ -311,7 +294,7 @@ function createKeyframeSuggestions(startSeconds: number, endSeconds: number, met
     {
       seconds: at(0.68),
       score: 74 + verticalBonus,
-      reasons: ['避开结尾停顿', '适合锁屏复测'],
+      reasons: ['避开结尾停顿', '适合动态照片复测'],
     },
   ].sort((left, right) => right.score - left.score);
 }
@@ -333,12 +316,22 @@ export function VidLiveTool() {
   const [cloudConsentConfirmed, setCloudConsentConfirmed] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
 
-  const refreshCloudJob = useCallback(async (jobId: string) => {
-    const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs/${jobId}`));
+  const refreshCloudJob = useCallback(async (jobId: string): Promise<CloudJob | null> => {
+    let response: Response;
+
+    try {
+      response = await fetch(toApiUrl(`/api/conversions/cloud-jobs/${jobId}`), {
+        cache: 'no-store',
+      });
+    } catch {
+      setFailureReason('cloud-timeout');
+      return null;
+    }
 
     if (!response.ok) {
       setFailureReason(response.status === 404 ? 'expired-link' : 'cloud-timeout');
-      return;
+      setGenerationProgress(0);
+      return null;
     }
 
     const nextJob = (await response.json()) as CloudJob;
@@ -352,22 +345,21 @@ export function VidLiveTool() {
     if (nextJob.status === 'expired') {
       setFailureReason('expired-link');
     }
+
+    return nextJob;
   }, []);
 
-  useEffect(() => {
-    if (!cloudJob || !isCloudJobActive(cloudJob)) {
-      return;
-    }
+  const pollCloudJobUntilSettled = useCallback(
+    async (jobId: string) => {
+      let nextJob = await refreshCloudJob(jobId);
 
-    const jobId = cloudJob.id;
-    const timer = window.setInterval(() => {
-      void refreshCloudJob(jobId);
-    }, 1_500);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [cloudJob, refreshCloudJob]);
+      while (nextJob && isCloudJobActive(nextJob)) {
+        await sleep(1_500);
+        nextJob = await refreshCloudJob(jobId);
+      }
+    },
+    [refreshCloudJob],
+  );
 
   useEffect(() => {
     if (!previewUrl || !file || isGif(file)) {
@@ -396,6 +388,7 @@ export function VidLiveTool() {
   }, [draft.keyframeSeconds, file, previewUrl]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reconcile draft limits after metadata/preset changes.
     setDraft((current) => {
       const preset = exportPresets[current.presetId];
       const sourceDurationMax = Math.max(productLimits.minDurationSeconds, metadata?.durationSeconds ?? preset.maxDurationSeconds);
@@ -602,6 +595,7 @@ export function VidLiveTool() {
         });
 
         if (!response.ok) {
+          setGenerationProgress(0);
           setFailureReason(response.status === 413 ? 'file-too-large' : 'cloud-timeout');
           return;
         }
@@ -609,6 +603,7 @@ export function VidLiveTool() {
         const nextJob = (await response.json()) as CloudJob;
         setCloudJob(nextJob);
         setGenerationProgress(nextJob.progress);
+        await pollCloudJobUntilSettled(nextJob.id);
         return;
       }
 
@@ -658,12 +653,12 @@ export function VidLiveTool() {
               VidLive
             </div>
 
-            <SavePathPanel presetId={draft.presetId} />
+            <SavePathPanel />
 
             <div className="flex flex-wrap gap-2 lg:justify-end">
               <StatusPill icon={<ShieldCheck size={15} />} label="本地优先" />
-              <StatusPill icon={<Clock3 size={15} />} label="1-30 秒" />
-              <StatusPill icon={<FileArchive size={15} />} label="素材包导出" />
+              <StatusPill icon={<Clock3 size={15} />} label="1-3 秒实况" />
+              <StatusPill icon={<ImageIcon size={15} />} label="安卓单文件" />
             </div>
           </header>
 
@@ -783,7 +778,7 @@ export function VidLiveTool() {
               {(isGenerating || generationProgress > 0 || cloudBusy) && (
                 <ProgressBar
                   value={generationProgress}
-                  label={draft.mode === 'cloud' || cloudJob ? '云端任务处理中' : isGenerating ? '本地打包中' : '生成完成'}
+                  label={draft.mode === 'cloud' || cloudJob ? '安卓实况图生成中' : isGenerating ? '本地打包中' : '生成完成'}
                 />
               )}
 
@@ -798,22 +793,6 @@ export function VidLiveTool() {
                   onDownload={(url) => {
                     window.location.assign(toApiUrl(url));
                   }}
-                  onAppleDownload={async () => {
-                    if (cloudJob.previewPhoto && cloudJob.pairedVideo) {
-                      const shared = await shareAppleLivePhotoFiles(
-                        toApiUrl(cloudJob.previewPhoto.downloadUrl),
-                        toApiUrl(cloudJob.pairedVideo.downloadUrl),
-                      );
-
-                      if (shared) {
-                        return;
-                      }
-                    }
-
-                    if (cloudJob.artifact) {
-                      window.location.assign(toApiUrl(cloudJob.artifact.downloadUrl));
-                    }
-                  }}
                   onDelete={async () => {
                     await fetch(toApiUrl(`/api/conversions/cloud-jobs/${cloudJob.id}`), {
                       method: 'DELETE',
@@ -825,18 +804,18 @@ export function VidLiveTool() {
               )}
 
               {exportResult || cloudJob?.status === 'completed' ? (
-                <Panel title="兼容反馈" icon={<ShieldCheck size={18} />}>
+                <Panel title="安卓反馈" icon={<ShieldCheck size={18} />}>
                   <div className="grid grid-cols-2 gap-2">
                     <ToggleButton
                       active={feedbackStatus === '已记录'}
-                      label="保存成功"
+                      label="识别成功"
                       onClick={() => {
-                        void submitCompatibilityFeedback(true, draft.presetId === 'ios-lock-screen');
+                        void submitCompatibilityFeedback(true, false);
                       }}
                     />
                     <ToggleButton
                       active={feedbackStatus === '提交失败'}
-                      label="保存失败"
+                      label="未识别"
                       onClick={() => {
                         void submitCompatibilityFeedback(false, false);
                       }}
@@ -876,7 +855,7 @@ export function VidLiveTool() {
                   <ModeButton
                     active={draft.mode === 'cloud'}
                     label="云端"
-                    description="元数据实验"
+                    description="安卓实况图"
                     tooltip={modeHelpText.cloud}
                     onClick={() => {
                       setExportResult(null);
@@ -1066,7 +1045,7 @@ export function VidLiveTool() {
                     className="mt-1 h-4 w-4 accent-[#23b7a4]"
                   />
                   <span>
-                    云端上传确认：同意上传当前素材，临时文件保留 24 小时，可在任务完成后手动删除。
+                    云端上传确认：同意上传当前素材生成安卓实况图，临时文件保留 24 小时，可在任务完成后手动删除。
                   </span>
                 </label>
               )}
@@ -1080,10 +1059,10 @@ export function VidLiveTool() {
                 {isGenerating ? <Loader2 size={17} className="animate-spin" /> : <Download size={17} />}
                 {isGenerating
                   ? draft.mode === 'cloud'
-                    ? '提交任务'
+                    ? '生成实况图'
                     : '正在生成'
                   : draft.mode === 'cloud'
-                    ? '提交云端任务'
+                    ? '生成安卓实况图'
                     : '生成文件'}
               </button>
             </aside>
@@ -1278,26 +1257,23 @@ function CoverPreview({ coverUrl, isGif, open }: { coverUrl: string | null; isGi
   );
 }
 
-function SavePathPanel({ presetId }: { presetId: ExportPresetId }) {
-  const isLockScreen = presetId === 'ios-lock-screen';
+function SavePathPanel() {
   const items = useMemo(
     () => [
       {
-        id: 'iphone',
+        id: 'android',
         icon: <Smartphone size={20} />,
-        title: isLockScreen ? 'iPhone 锁屏路径' : 'iPhone 相册路径',
-        text: isLockScreen
-          ? 'Safari 下载 ZIP 后只会得到文件 App 素材包；要变成锁屏实况，还需云端元数据和真机导入路径验证。'
-          : 'Safari 下载 ZIP 后通过文件 App 查看素材包；这一步不会自动写入 iOS 相册成为实况照片。',
+        title: '安卓实况路径',
+        text: '手机直接下载 motion-photo_MP.jpg，用系统相册或 Google Photos 打开检查动态照片入口。',
       },
       {
         id: 'desktop',
         icon: <MonitorDown size={20} />,
-        title: '桌面下载路径',
-        text: '下载 ZIP、关键帧和动态片段；后续用 AirDrop、Shortcuts 或容器云端包验证相册识别。',
+        title: '桌面复测路径',
+        text: '桌面下载 ZIP 后取出安卓实况图，USB 或原文件传输到手机，避免聊天软件压缩。',
       },
     ],
-    [isLockScreen],
+    [],
   );
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -1403,12 +1379,12 @@ function SidebarInfoCarousel() {
         <div className="grid h-full grid-rows-2 gap-2">
           <div className="flex flex-col justify-center rounded-lg border-2 border-ink/15 bg-white p-3">
             <p className="text-sm font-black text-ink">Free</p>
-            <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、本地素材包、标准预设。</p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、标准实况图、完整 ZIP。</p>
           </div>
           <div className="flex flex-col justify-center rounded-lg border-2 border-ink bg-[#d9f99d] p-3 shadow-clay-sm">
             <p className="text-sm font-black text-ink">Pro Monthly</p>
             <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
-              批量处理、4K 输出、云端优先队列、历史记录。
+              批量处理、4K 素材、云端优先队列、历史记录。
             </p>
           </div>
         </div>
@@ -1420,10 +1396,10 @@ function SidebarInfoCarousel() {
       icon: <Film size={18} />,
       content: (
         <div className="grid h-full grid-rows-5 gap-1.5">
-          <ToolboxMiniItem label="Video/GIF to Live Photo 素材包" status="available" />
-          <ToolboxMiniItem label="相册 Live Photo 写入" status="preview" />
-          <ToolboxMiniItem label="Live Photo to GIF/MP4" status="preview" />
-          <ToolboxMiniItem label="Image to Live Photo" status="preview" />
+          <ToolboxMiniItem label="Video/GIF to Android Motion Photo" status="available" />
+          <ToolboxMiniItem label="安卓相册识别矩阵" status="preview" />
+          <ToolboxMiniItem label="Motion Photo to GIF/MP4" status="preview" />
+          <ToolboxMiniItem label="Image to Motion Photo" status="preview" />
           <ToolboxMiniItem label="AI Image Motion" status="planned" />
         </div>
       ),
@@ -1567,7 +1543,7 @@ function ExportResultPanel({
         className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5"
       >
         <FileArchive size={16} />
-        下载素材 ZIP
+        下载完整 ZIP
       </button>
       {result.warnings.length > 0 && (
         <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#fff4df] p-3">
@@ -1604,7 +1580,6 @@ function CloudJobPanel({
   androidMotionPhotoUrl,
   previewPhotoUrl,
   onDownload,
-  onAppleDownload,
   onDelete,
 }: {
   job: CloudJob;
@@ -1612,11 +1587,9 @@ function CloudJobPanel({
   androidMotionPhotoUrl: string | null;
   previewPhotoUrl: string | null;
   onDownload: (url: string) => void;
-  onAppleDownload: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
   const [qrPreview, setQrPreview] = useState<{ downloadUrl: string; dataUrl: string } | null>(null);
-  const [appleDownloadBusy, setAppleDownloadBusy] = useState(false);
   const statusCopy: Record<CloudJobStatus, string> = {
     queued: '排队中',
     processing: '处理中',
@@ -1627,9 +1600,11 @@ function CloudJobPanel({
   };
   const canDownload = job.status === 'completed' && Boolean(job.artifact);
   const canDownloadAndroidMotionPhoto = job.status === 'completed' && Boolean(job.androidMotionPhoto && androidMotionPhotoUrl);
-  const canDownloadAppleLivePhoto = job.status === 'completed' && Boolean(job.artifact || (job.previewPhoto && job.pairedVideo));
   const canPreviewPhoto = job.status === 'completed' && Boolean(job.previewPhoto) && Boolean(previewPhotoUrl);
   const activeDownloadUrl = canDownloadAndroidMotionPhoto ? androidMotionPhotoUrl : canDownload ? downloadUrl : null;
+  const androidRelevantWarnings = job.warnings.filter((warning) => {
+    return !warning.includes('MakerNote') && !warning.includes('ContentIdentifier') && !warning.includes('Apple');
+  });
   const qrDataUrl = qrPreview?.downloadUrl === activeDownloadUrl ? qrPreview.dataUrl : null;
   const downloadButtonClass =
     'inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 text-sm font-black shadow-clay-sm transition hover:-translate-y-0.5';
@@ -1665,7 +1640,7 @@ function CloudJobPanel({
   }, [activeDownloadUrl]);
 
   return (
-    <Panel title="云端任务" icon={<CloudOff size={18} />}>
+    <Panel title="安卓实况图" icon={<ImageIcon size={18} />}>
       <div className="rounded-lg border-2 border-ink bg-[#e4f7ff] p-3">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-black text-ink">{statusCopy[job.status]}</p>
@@ -1680,10 +1655,10 @@ function CloudJobPanel({
       </div>
 
       {job.status === 'completed' && (
-        <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#fff4df] p-3">
-          <p className="text-xs font-black text-ink">实况识别说明</p>
+        <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#d9f99d] p-3">
+          <p className="text-xs font-black text-ink">安卓验收</p>
           <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
-            安卓优先下载单文件动图；苹果按钮会优先调系统分享，网页不能直接写入 iOS 相册 LIVE。
+            下载单文件 motion-photo_MP.jpg，用系统相册或 Google Photos 打开，检查动态照片/实况入口。
           </p>
         </div>
       )}
@@ -1709,11 +1684,11 @@ function CloudJobPanel({
         </div>
       )}
 
-      {job.warnings.length > 0 && (
+      {androidRelevantWarnings.length > 0 && (
         <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#fff4df] p-3">
           <p className="text-xs font-black text-ink">兼容提示</p>
           <ul className="mt-2 grid gap-1 text-xs font-semibold leading-5 text-ink/65">
-            {job.warnings.map((warning) => (
+            {androidRelevantWarnings.map((warning) => (
               <li key={warning}>- {warning}</li>
             ))}
           </ul>
@@ -1738,31 +1713,17 @@ function CloudJobPanel({
           <a
             href={androidMotionPhotoUrl}
             download={job.androidMotionPhoto?.fileName ?? 'motion-photo_MP.jpg'}
-            className={`${downloadButtonClass} bg-[#ff715b] text-white`}
+            className={`${downloadButtonClass} h-12 bg-[#ff715b] text-white sm:col-span-2`}
           >
             <ImageIcon size={16} />
-            下载安卓动图
+            下载安卓实况图
           </a>
         ) : (
-          <button type="button" disabled className={disabledDownloadButtonClass}>
+          <button type="button" disabled className={`${disabledDownloadButtonClass} sm:col-span-2`}>
             <ImageIcon size={16} />
-            {job.status === 'completed' ? '安卓动图未生成' : '下载安卓动图'}
+            {job.status === 'completed' ? '安卓实况图未生成' : '下载安卓实况图'}
           </button>
         )}
-        <button
-          type="button"
-          disabled={!canDownloadAppleLivePhoto || appleDownloadBusy}
-          onClick={() => {
-            setAppleDownloadBusy(true);
-            void onAppleDownload().finally(() => {
-              setAppleDownloadBusy(false);
-            });
-          }}
-          className={`${downloadButtonClass} bg-[#6aa9ff] text-white disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40`}
-        >
-          {appleDownloadBusy ? <Loader2 size={16} className="animate-spin" /> : <Smartphone size={16} />}
-          苹果实况素材
-        </button>
         <button
           type="button"
           disabled={!canDownload}
@@ -1774,7 +1735,7 @@ function CloudJobPanel({
           className={`${downloadButtonClass} bg-[#23b7a4] text-white disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40`}
         >
           <FileArchive size={16} />
-          下载素材包
+          完整 ZIP
         </button>
         <button
           type="button"

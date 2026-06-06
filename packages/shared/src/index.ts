@@ -49,8 +49,8 @@ export interface ExportPreset {
 export const exportPresets: Record<ExportPresetId, ExportPreset> = {
   'standard-live-photo': {
     id: 'standard-live-photo',
-    label: '标准 Live Photo 素材包',
-    target: '标准实况片段，最长 3 秒',
+    label: '标准安卓实况图',
+    target: '标准动态照片片段，最长 3 秒',
     defaultDurationSeconds: 3,
     maxDurationSeconds: productLimits.livePhotoMaxDurationSeconds,
     preferredAspectRatio: 'source',
@@ -58,8 +58,8 @@ export const exportPresets: Record<ExportPresetId, ExportPreset> = {
   },
   'ios-lock-screen': {
     id: 'ios-lock-screen',
-    label: 'iOS 锁屏素材包',
-    target: '锁屏默认 2 秒，最长 3 秒',
+    label: '安卓竖屏实况图',
+    target: '默认 2 秒，9:16 竖屏，优先安卓相册识别',
     defaultDurationSeconds: 2,
     maxDurationSeconds: productLimits.livePhotoMaxDurationSeconds,
     preferredAspectRatio: '9:16',
@@ -69,7 +69,7 @@ export const exportPresets: Record<ExportPresetId, ExportPreset> = {
   'social-fallback': {
     id: 'social-fallback',
     label: '社交兜底',
-    target: '兼容实况导出，最长 3 秒',
+    target: '导出 MP4 / GIF / WebP 兜底格式',
     defaultDurationSeconds: 3,
     maxDurationSeconds: productLimits.livePhotoMaxDurationSeconds,
     preferredAspectRatio: 'source',
@@ -149,8 +149,8 @@ export const failureAdvice: Record<FailureReason, FailureAdvice> = {
   },
   'lock-screen-not-playing': {
     reason: 'lock-screen-not-playing',
-    title: '锁屏未播放',
-    action: '使用 1-2 秒竖屏片段，确认 iOS 版本和 Live 开关。',
+    title: '动态照片未播放',
+    action: '使用 1-2 秒竖屏片段，优先用 Google Photos 或系统相册复测。',
   },
 };
 
@@ -220,25 +220,25 @@ export interface ExitCriterion {
 
 export const phaseZeroModules: ValidationModule[] = [
   {
-    id: 'live-photo-poc',
-    title: 'Live Photo 生成 POC',
-    summary: '确认短视频能走完导入、裁剪、封面帧和导出组合。',
-    status: 'warn',
-    proof: '需要真机导入样例和导出包验证。',
+    id: 'android-motion-photo-poc',
+    title: 'Android Motion Photo 生成 POC',
+    summary: '确认短视频能走完导入、裁剪、封面帧、Motion Photo 单文件和 ZIP 导出。',
+    status: 'pass',
+    proof: '已用 Android 真机验证 motion-photo_MP.jpg 可被系统识别为实况图。',
   },
   {
     id: 'save-path-matrix',
     title: '保存路径矩阵',
-    summary: '验证 iPhone Safari、AirDrop、Shortcuts、桌面 ZIP 路径。',
+    summary: '验证 Android 浏览器直下、桌面 ZIP、USB 原文件传输和相册扫描路径。',
     status: 'pass',
-    proof: '已有路径说明，仍需真机复测。',
+    proof: 'Android 局域网访问、云端任务、下载和真机识别链路已打通。',
   },
   {
-    id: 'lockscreen-check',
-    title: '锁屏兼容检查',
-    summary: '对 1-2 秒竖屏片段、60 FPS 源素材和播放行为做矩阵记录。',
+    id: 'android-gallery-check',
+    title: '安卓相册识别检查',
+    summary: '对 1-3 秒竖屏片段、60 FPS 源素材、有声素材和相册播放行为做矩阵记录。',
     status: 'pending',
-    proof: '等待多机型和多 iOS 版本实测。',
+    proof: '等待多品牌 Android 系统相册和 Google Photos 复测。',
   },
   {
     id: 'local-first-check',
@@ -251,57 +251,57 @@ export const phaseZeroModules: ValidationModule[] = [
 
 export const savePathSteps: SavePathStep[] = [
   {
-    id: 'iphone-safari',
-    label: 'iPhone Safari',
-    status: 'warn',
+    id: 'android-browser',
+    label: 'Android 浏览器',
+    status: 'pass',
     hint: '最接近真实用户路径。',
-    steps: ['导入素材', '下载导出包', '保存到相册', '检查锁屏设置'],
+    steps: ['导入素材', '生成安卓实况图', '下载 motion-photo_MP.jpg', '用相册检查动态入口'],
   },
   {
-    id: 'airdrop',
-    label: 'AirDrop',
+    id: 'desktop-usb',
+    label: '桌面 USB',
     status: 'pass',
     hint: '手机和桌面之间的低摩擦迁移方式。',
-    steps: ['桌面生成 ZIP', '发送到 iPhone', '相册保存', '锁屏测试'],
+    steps: ['桌面生成 ZIP', '取出 motion-photo_MP.jpg', 'USB 原文件传输', '相册刷新验证'],
   },
   {
-    id: 'shortcuts',
-    label: 'Shortcuts',
+    id: 'google-photos',
+    label: 'Google Photos',
     status: 'pending',
-    hint: '用于绕过浏览器写入限制的备用方案。',
-    steps: ['确认快捷指令', '导入文件', '写入相册', '再次播放验证'],
+    hint: '用于判断标准 Motion Photo 结构是否被主流查看器识别。',
+    steps: ['下载原文件', 'Google Photos 打开', '检查 Motion Photo 入口', '记录播放结果'],
   },
   {
     id: 'desktop-zip',
     label: '桌面 ZIP 下载',
     status: 'pass',
     hint: '适合先在桌面完成完整导出。',
-    steps: ['生成 ZIP', '下载到本地', '传到手机', '复查封面帧'],
+    steps: ['生成 ZIP', '下载到本地', '解压单文件', '传到手机复查'],
   },
 ];
 
 export const compatibilityRows: CompatibilityRow[] = [
   {
-    id: 'iphone-safari',
-    environment: 'iPhone Safari',
-    priority: 'P0',
-    importReady: 'pass',
-    trimReady: 'pass',
-    exportReady: 'warn',
-    saveReady: 'warn',
-    lockScreenReady: 'pending',
-    note: '重点看保存路径和锁屏播放。',
-  },
-  {
-    id: 'macos-safari',
-    environment: 'macOS Safari',
+    id: 'android-edge',
+    environment: 'Android Edge / Chrome',
     priority: 'P0',
     importReady: 'pass',
     trimReady: 'pass',
     exportReady: 'pass',
     saveReady: 'pass',
+    lockScreenReady: 'pass',
+    note: '重点看手机下载和系统相册识别。',
+  },
+  {
+    id: 'google-photos',
+    environment: 'Google Photos',
+    priority: 'P0',
+    importReady: 'pass',
+    trimReady: 'pending',
+    exportReady: 'pass',
+    saveReady: 'pass',
     lockScreenReady: 'pending',
-    note: '适合先做完整导出包验证。',
+    note: '重点验证 Motion Photo 入口和播放行为。',
   },
   {
     id: 'chrome-desktop',
@@ -312,7 +312,7 @@ export const compatibilityRows: CompatibilityRow[] = [
     exportReady: 'warn',
     saveReady: 'pass',
     lockScreenReady: 'pending',
-    note: '重点观察本地转码与下载行为。',
+    note: '重点观察本地预览、ZIP 下载和扫码传手机。',
   },
   {
     id: 'edge-desktop',
@@ -326,15 +326,15 @@ export const compatibilityRows: CompatibilityRow[] = [
     note: '重点检查兼容性和下载提示。',
   },
   {
-    id: 'ios17-device',
-    environment: 'iOS 17+ 真机',
+    id: 'android-oem-gallery',
+    environment: 'Android 系统相册',
     priority: 'P0',
-    importReady: 'pending',
+    importReady: 'pass',
     trimReady: 'pending',
-    exportReady: 'pending',
-    saveReady: 'pending',
+    exportReady: 'pass',
+    saveReady: 'pass',
     lockScreenReady: 'pending',
-    note: '重点验证标准 Live Photo 识别和锁屏播放。',
+    note: '重点验证不同厂商对 Motion Photo XMP 的识别差异。',
   },
 ];
 
@@ -342,11 +342,11 @@ export const phaseZeroExitCriteria: ExitCriterion[] = [
   {
     id: 'one-path',
     title: '至少一条保存路径可用',
-    detail: '确认从浏览器到 iPhone 相册的完整链路。',
+    detail: '确认从 Android 浏览器到系统相册识别的完整链路。',
   },
   {
-    id: 'lockscreen-evidence',
-    title: '锁屏播放有真机记录',
+    id: 'android-gallery-evidence',
+    title: '安卓相册播放有真机记录',
     detail: '记录成功/失败条件，不把结果写成猜测。',
   },
   {
