@@ -28,7 +28,16 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type ReactNode,
+  type SetStateAction,
+} from 'react';
 import { type FileRejection, useDropzone } from 'react-dropzone';
 import QRCode from 'qrcode';
 import {
@@ -313,6 +322,30 @@ function sleep(milliseconds: number): Promise<void> {
   });
 }
 
+function startEstimatedLocalProgress(setProgress: Dispatch<SetStateAction<number>>): () => void {
+  let stopped = false;
+  let timerId = 0;
+  const startedAt = performance.now();
+
+  const tick = () => {
+    if (stopped) {
+      return;
+    }
+
+    const elapsedSeconds = (performance.now() - startedAt) / 1000;
+    const estimate = Math.min(88, Math.round(18 + Math.log1p(elapsedSeconds * 1.8) * 28));
+    setProgress((current) => Math.max(current, estimate));
+    timerId = window.setTimeout(tick, 450);
+  };
+
+  timerId = window.setTimeout(tick, 250);
+
+  return () => {
+    stopped = true;
+    window.clearTimeout(timerId);
+  };
+}
+
 function createInitialCompatibilityForm(): CompatibilityFormState {
   const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
 
@@ -419,6 +452,42 @@ function resolveGenerationResource(user: AuthUser, mode: ConversionDraft['mode']
   }
 
   return 'free-local';
+}
+
+function isUnlimitedUsage(usage: AuthUsageSummary | null | undefined): boolean {
+  return Boolean(usage && (usage.quotaLimit < 0 || usage.remainingToday < 0));
+}
+
+function formatQuotaValue(usage: AuthUsageSummary | null | undefined): string {
+  if (!usage) {
+    return '-';
+  }
+
+  return isUnlimitedUsage(usage) ? '无限' : `${usage.remainingToday}/${usage.quotaLimit}`;
+}
+
+function formatQuotaDetail(usage: AuthUsageSummary | null | undefined): string {
+  if (!usage) {
+    return '登录后同步额度';
+  }
+
+  return isUnlimitedUsage(usage) ? `永久会员，已用 ${usage.usedToday} 次` : `已用 ${usage.usedToday} 次`;
+}
+
+function formatPlanLabel(session: AuthSession | null): string {
+  if (!session) {
+    return '未登录';
+  }
+
+  if (session.user.planType === 'pro') {
+    return session.user.dailyQuota < 0 ? '永久 VIP / Pro' : 'VIP / Pro';
+  }
+
+  return 'Free';
+}
+
+function formatPlanBadge(user: AuthUser): string {
+  return user.dailyQuota < 0 ? '永久' : user.planType;
 }
 
 function createCloudQuery(draft: ConversionDraft): string {
@@ -895,10 +964,13 @@ export function VidLiveTool() {
     setCloudJob(null);
     setGenerationDialogOpen(true);
     setIsGenerating(true);
-    setGenerationProgress(draft.mode === 'cloud' ? 8 : 18);
+    setGenerationProgress(draft.mode === 'cloud' ? 3 : 4);
+
+    let stopEstimatedProgress: (() => void) | null = null;
 
     try {
       if (draft.mode === 'cloud') {
+        setGenerationProgress(6);
         const formData = new FormData();
         formData.append('file', file);
 
@@ -916,13 +988,20 @@ export function VidLiveTool() {
         const nextJob = (await response.json()) as CloudJob;
         setGenerationFeedbackAvailable(true);
         setCloudJob(nextJob);
-        setGenerationProgress(nextJob.progress);
+        setGenerationProgress(Math.max(10, nextJob.progress));
         await pollCloudJobUntilSettled(nextJob.id);
         return;
       }
 
-      setGenerationProgress(42);
+      setGenerationProgress(8);
+      await sleep(120);
+      setGenerationProgress(14);
+      stopEstimatedProgress = startEstimatedLocalProgress(setGenerationProgress);
       const result = await generateLocalExport(file, previewUrl, draft, metadata);
+      stopEstimatedProgress();
+      stopEstimatedProgress = null;
+      setGenerationProgress(94);
+      await sleep(120);
       setGenerationProgress(100);
       setGenerationFeedbackAvailable(true);
       setExportResult(result);
@@ -931,6 +1010,7 @@ export function VidLiveTool() {
       setGenerationFeedbackAvailable(true);
       setFailureReason(draft.mode === 'cloud' ? 'cloud-timeout' : getFailureFromExportError(error));
     } finally {
+      stopEstimatedProgress?.();
       setIsGenerating(false);
     }
   };
@@ -1014,7 +1094,7 @@ export function VidLiveTool() {
         return;
       }
 
-      if (payload.usage.remainingToday <= 0) {
+      if (!isUnlimitedUsage(payload.usage) && payload.usage.remainingToday <= 0) {
         setGenerationAccess({
           kind: 'quota-exhausted',
           usage: payload.usage,
@@ -1117,9 +1197,9 @@ export function VidLiveTool() {
       <section className="border-b-2 border-ink/10 bg-[#fff4df]">
         <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-4 py-4 sm:px-6 lg:px-8">
           <header className="grid gap-3 lg:grid-cols-[auto_minmax(280px,1fr)_auto] lg:items-center">
-            <div className="inline-flex h-11 items-center gap-2 rounded-lg border-2 border-ink bg-white px-3 font-black shadow-clay-sm">
+            <div className="brand-enter inline-flex h-11 items-center gap-2 rounded-lg border-2 border-ink bg-white px-3 shadow-clay-sm">
               <img src="/images/01.webp" alt="" className="h-6 w-6 rounded-md object-cover" />
-              VidLive
+              <span className="brand-wordmark">VidLive</span>
             </div>
 
             <SavePathPanel />
@@ -2105,7 +2185,7 @@ function GenerationAccessDialog({
   const isProRequired = access?.kind === 'pro-required';
   const isBlocked = access?.kind === 'quota-exhausted' || access?.kind === 'error';
   const resourceCopy = getGenerationResourceCopy(access?.resource ?? null, mode);
-  const planLabel = session?.user.planType === 'pro' ? 'VIP / Pro' : session ? 'Free' : '未登录';
+  const planLabel = formatPlanLabel(session);
   const title =
     access?.kind === 'ready'
       ? '生成资源确认'
@@ -2153,8 +2233,8 @@ function GenerationAccessDialog({
             <GenerationResourceCard label="当前套餐" value={planLabel} detail={session ? '账号已识别' : '未登录不可生成'} />
             <GenerationResourceCard
               label="今日额度"
-              value={usage ? `${usage.remainingToday}/${usage.quotaLimit}` : '-'}
-              detail={usage ? `已用 ${usage.usedToday} 次` : '登录后同步额度'}
+              value={formatQuotaValue(usage)}
+              detail={formatQuotaDetail(usage)}
             />
           </div>
 
@@ -2310,7 +2390,7 @@ function AuthEntryButton({
           </span>
           <span className="hidden max-w-20 truncate sm:inline">{session.user.username}</span>
           <span className="rounded-md bg-[#e4f7ff] px-1.5 py-0.5 text-[10px] uppercase text-ink/70">
-            {session.user.planType}
+            {formatPlanBadge(session.user)}
           </span>
         </button>
         <button
@@ -2880,8 +2960,14 @@ function GenerationDialog({
       : status === 'complete'
         ? '生成完成'
         : isCloudMode
-          ? '安卓实况图生成中'
-          : '本地打包中';
+          ? cloudJob
+            ? '云端处理返回进度'
+            : '上传并创建任务'
+          : safeProgress < 15
+            ? '准备素材'
+            : safeProgress < 90
+              ? '本地渲染与打包'
+              : '整理下载文件';
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-ink/45 p-3 sm:items-center sm:p-5">

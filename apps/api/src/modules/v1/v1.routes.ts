@@ -52,7 +52,7 @@ interface ToolParams {
 }
 
 export async function registerV1Routes(server: FastifyInstance, config: AppConfig): Promise<void> {
-  const service = await V1Service.create(config.jwtSecret, config.databaseUrl);
+  const service = await V1Service.create(config.jwtSecret, config.databaseUrl, config.permanentMemberEmails);
 
   server.post<{ Body: AuthBody }>('/api/v1/auth/register', async (request, reply) => {
     try {

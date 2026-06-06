@@ -21,7 +21,10 @@ export interface AppConfig {
   jwtSecret: string;
   authCookieSecure: boolean;
   v1StorePath: string;
+  permanentMemberEmails: string[];
 }
+
+const builtInPermanentMemberEmails = ['1139189851@qq.com'];
 
 function readNumber(name: string, fallback: number): number {
   const value = process.env[name];
@@ -45,6 +48,19 @@ function readOptionalString(name: string): string | null {
   return value ? value : null;
 }
 
+function readEmailList(name: string): string[] {
+  const value = process.env[name]?.trim();
+
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(/[,\s]+/u)
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export function loadConfig(): AppConfig {
   return {
     host: process.env.API_HOST ?? '0.0.0.0',
@@ -66,5 +82,6 @@ export function loadConfig(): AppConfig {
     jwtSecret: process.env.JWT_SECRET ?? 'dev-vidlive-secret-change-me',
     authCookieSecure: process.env.AUTH_COOKIE_SECURE === 'true',
     v1StorePath: process.env.V1_STORE_PATH ?? './data/v1-store.json',
+    permanentMemberEmails: [...new Set([...builtInPermanentMemberEmails, ...readEmailList('PERMANENT_MEMBER_EMAILS')])],
   };
 }

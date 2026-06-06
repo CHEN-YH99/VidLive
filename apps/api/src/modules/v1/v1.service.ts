@@ -6,6 +6,9 @@ const scryptAsync = promisify(scrypt);
 const tokenTtlMilliseconds = 7 * 24 * 60 * 60 * 1000;
 const maxFailedLoginAttempts = 5;
 const accountLockMilliseconds = 15 * 60 * 1000;
+const freeDailyQuota = 5;
+const proDailyQuota = 100;
+const unlimitedDailyQuota = -1;
 const commonWeakPasswords = new Set(['password', 'password123', '12345678', '123456789', 'qwerty123', 'vidlive123']);
 
 export interface V1UserProfile {
@@ -115,15 +118,24 @@ export class V1Service {
   private readonly experiments = new Map<string, ExperimentAssignment>();
   private readonly apiKeys = new Map<string, ApiKeyRecord>();
 
+  private readonly permanentMemberEmails: Set<string>;
+
   constructor(
     private readonly jwtSecret: string,
     private readonly authStore: V1AuthStore | null = null,
-  ) {}
+    permanentMemberEmails: readonly string[] = [],
+  ) {
+    this.permanentMemberEmails = new Set(permanentMemberEmails.map((email) => normalizeEmail(email)).filter(Boolean));
+  }
 
-  static async create(jwtSecret: string, databaseUrl: string | null): Promise<V1Service> {
+  static async create(
+    jwtSecret: string,
+    databaseUrl: string | null,
+    permanentMemberEmails: readonly string[] = [],
+  ): Promise<V1Service> {
     const authStore = databaseUrl ? await V1AuthStore.connect(databaseUrl) : null;
 
-    return new V1Service(jwtSecret, authStore);
+    return new V1Service(jwtSecret, authStore, permanentMemberEmails);
   }
 
   async register(input: { email: string; password: string; username: string }): Promise<{ user: V1UserProfile; token: string }> {
@@ -145,13 +157,14 @@ export class V1Service {
     }
 
     const passwordHash = await hashPassword(registration.password);
+    const initialPlan = this.resolveEntitledPlan(registration.email, 'free', freeDailyQuota);
     const userInput = {
       id: randomUUID(),
       email: registration.email,
       username: registration.username,
       passwordHash,
-      planType: 'free',
-      dailyQuota: 5,
+      planType: initialPlan.planType,
+      dailyQuota: initialPlan.dailyQuota,
     } as const;
     const now = new Date().toISOString();
     const user: StoredUser = this.authStore
@@ -164,12 +177,13 @@ export class V1Service {
           lastLoginAt: null,
         };
 
-    this.cacheUser(user);
-    this.recordUsage(user.id, 'user.registered', {});
+    const entitledUser = this.applyUserEntitlements(user);
+    this.cacheUser(entitledUser);
+    this.recordUsage(entitledUser.id, 'user.registered', {});
 
     return {
-      user: toPublicUser(user),
-      token: this.signToken(user),
+      user: toPublicUser(entitledUser),
+      token: this.signToken(entitledUser),
     };
   }
 
@@ -203,12 +217,13 @@ export class V1Service {
     nextUser.failedLoginCount = 0;
     nextUser.lockedUntil = null;
     nextUser.lastLoginAt = new Date().toISOString();
-    this.cacheUser(nextUser);
-    this.recordUsage(nextUser.id, 'user.logged_in', {});
+    const entitledUser = this.applyUserEntitlements(nextUser);
+    this.cacheUser(entitledUser);
+    this.recordUsage(entitledUser.id, 'user.logged_in', {});
 
     return {
-      user: toPublicUser(nextUser),
-      token: this.signToken(nextUser),
+      user: toPublicUser(entitledUser),
+      token: this.signToken(entitledUser),
     };
   }
 
@@ -233,7 +248,10 @@ export class V1Service {
       const cachedUser = this.users.get(payload.sub);
 
       if (cachedUser) {
-        return toPublicUser(cachedUser);
+        const entitledUser = this.applyUserEntitlements(cachedUser);
+        this.cacheUser(entitledUser);
+
+        return toPublicUser(entitledUser);
       }
 
       const storedUser = this.authStore ? await this.authStore.findUserById(payload.sub) : null;
@@ -242,7 +260,7 @@ export class V1Service {
         return null;
       }
 
-      const user = toStoredUser(storedUser);
+      const user = this.applyUserEntitlements(toStoredUser(storedUser));
       this.cacheUser(user);
 
       return toPublicUser(user);
@@ -271,15 +289,19 @@ export class V1Service {
   }
 
   getUsage(userId: string): V1UsageSummary {
-    const user = this.users.get(userId);
-
-    if (!user) {
-      throw new V1Error('user-not-found', 'User was not found.');
-    }
+    const user = this.requireUser(userId);
 
     const usedToday = this.usageLogs.filter((log) => {
       return log.userId === userId && log.action === 'conversion.created' && isToday(log.timestamp);
     }).length;
+
+    if (isUnlimitedDailyQuota(user.dailyQuota)) {
+      return {
+        quotaLimit: unlimitedDailyQuota,
+        usedToday,
+        remainingToday: unlimitedDailyQuota,
+      };
+    }
 
     return {
       quotaLimit: user.dailyQuota,
@@ -291,7 +313,7 @@ export class V1Service {
   consumeConversionQuota(userId: string, metadata: unknown): V1UsageSummary {
     const summary = this.getUsage(userId);
 
-    if (summary.remainingToday <= 0) {
+    if (!isUnlimitedDailyQuota(summary.remainingToday) && summary.remainingToday <= 0) {
       throw new V1Error('quota-exceeded', 'Daily conversion quota has been used up.');
     }
 
@@ -424,14 +446,14 @@ export class V1Service {
         id: 'free',
         label: 'Free',
         priceCents: 0,
-        quota: 5,
+        quota: freeDailyQuota,
         features: ['本地导出', '标准预设', '基础保存指引'],
       },
       {
         id: 'pro-monthly',
         label: 'Pro Monthly',
         priceCents: 900,
-        quota: 100,
+        quota: proDailyQuota,
         features: ['云端优先队列', '批量处理', '4K 输出', '历史记录', '高级编辑'],
       },
     ];
@@ -466,9 +488,7 @@ export class V1Service {
 
     const user = this.requireUser(intent.userId);
     intent.status = 'paid';
-    user.planType = 'pro';
-    user.dailyQuota = 100;
-    this.persistUserPlan(user);
+    this.updateUserPlan(user, 'pro', proDailyQuota);
     this.recordUsage(user.id, 'billing.subscription_started', intent);
 
     return {
@@ -479,9 +499,7 @@ export class V1Service {
 
   cancelSubscription(userId: string): V1UserProfile {
     const user = this.requireUser(userId);
-    user.planType = 'free';
-    user.dailyQuota = 5;
-    this.persistUserPlan(user);
+    this.updateUserPlan(user, 'free', freeDailyQuota);
     this.recordUsage(user.id, 'billing.subscription_cancelled', {});
 
     return toPublicUser(user);
@@ -817,6 +835,53 @@ export class V1Service {
     void this.authStore?.updatePlan(user.id, user.planType, user.dailyQuota).catch(() => undefined);
   }
 
+  private applyUserEntitlements(user: StoredUser): StoredUser {
+    if (!this.isPermanentMemberEmail(user.email)) {
+      return user;
+    }
+
+    if (user.planType === 'pro' && user.dailyQuota === unlimitedDailyQuota) {
+      return user;
+    }
+
+    user.planType = 'pro';
+    user.dailyQuota = unlimitedDailyQuota;
+    this.persistUserPlan(user);
+
+    return user;
+  }
+
+  private updateUserPlan(user: StoredUser, planType: 'free' | 'pro', dailyQuota: number): StoredUser {
+    const entitledPlan = this.resolveEntitledPlan(user.email, planType, dailyQuota);
+    user.planType = entitledPlan.planType;
+    user.dailyQuota = entitledPlan.dailyQuota;
+    this.persistUserPlan(user);
+
+    return user;
+  }
+
+  private resolveEntitledPlan(
+    email: string,
+    planType: 'free' | 'pro',
+    dailyQuota: number,
+  ): Pick<V1UserProfile, 'planType' | 'dailyQuota'> {
+    if (this.isPermanentMemberEmail(email)) {
+      return {
+        planType: 'pro',
+        dailyQuota: unlimitedDailyQuota,
+      };
+    }
+
+    return {
+      planType,
+      dailyQuota,
+    };
+  }
+
+  private isPermanentMemberEmail(email: string): boolean {
+    return this.permanentMemberEmails.has(normalizeEmail(email));
+  }
+
   private requireUser(userId: string): StoredUser {
     const user = this.users.get(userId);
 
@@ -824,7 +889,7 @@ export class V1Service {
       throw new V1Error('user-not-found', 'User was not found.');
     }
 
-    return user;
+    return this.applyUserEntitlements(user);
   }
 }
 
@@ -901,6 +966,10 @@ function validateLoginInput(input: { email: string; password: string }): { email
 
 function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function isUnlimitedDailyQuota(value: number): boolean {
+  return value < 0;
 }
 
 function isValidEmail(value: string): boolean {
