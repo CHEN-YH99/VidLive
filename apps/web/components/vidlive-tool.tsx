@@ -48,9 +48,7 @@ import {
   supportedInputs,
   type CompatibilityDownloadResult,
   type CompatibilityOsName,
-  type CompatibilityReport,
   type CompatibilityReportInput,
-  type CompatibilitySummary,
   type CompatibilityTestKit,
   type CompatibilityTransferPath,
   type CompatibilityViewerId,
@@ -187,9 +185,13 @@ interface CompatibilityFormState {
   notes: string;
 }
 
-interface CompatibilitySubmitResponse {
-  report: CompatibilityReport;
-  summary: CompatibilitySummary;
+interface CompatibilityValidatedFormText {
+  deviceBrand: string;
+  deviceModel: string;
+  osVersion: string;
+  browserName: string;
+  browserVersion: string;
+  notes: string;
 }
 
 interface CompatibilityDownloadContext {
@@ -247,6 +249,21 @@ const compatibilityOutcomeOptions: Array<{ id: CompatibilityViewerOutcome; label
   { id: 'failed', label: '失败' },
   { id: 'not-tested', label: '未测' },
 ];
+
+const compatibilityTextPattern = /^[\p{L}\p{N}\s._+()（）·/-]+$/u;
+const compatibilityMeaningfulTextPattern = /[\p{L}\p{N}]/u;
+const compatibilityControlCharacterPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u;
+const compatibilityOsNameValues: CompatibilityOsName[] = ['Android', 'HarmonyOS', 'Other'];
+const compatibilityDownloadResultValues: CompatibilityDownloadResult[] = ['success', 'failed', 'unknown'];
+const compatibilityTransferPathValues: CompatibilityTransferPath[] = [
+  'browser-direct',
+  'usb',
+  'wechat',
+  'qq',
+  'cloud-drive',
+  'unknown',
+];
+const compatibilityViewerOutcomeValues = compatibilityOutcomeOptions.map((option) => option.id);
 
 function isGif(file: File): boolean {
   return file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
@@ -368,6 +385,92 @@ function createInitialCompatibilityForm(): CompatibilityFormState {
     },
     notes: '',
   };
+}
+
+function validateCompatibilityForm(form: CompatibilityFormState): {
+  errors: string[];
+  text: CompatibilityValidatedFormText;
+} {
+  const errors: string[] = [];
+  const text: CompatibilityValidatedFormText = {
+    deviceBrand: validateCompatibilityTextField('品牌', form.deviceBrand, 80, true, errors),
+    deviceModel: validateCompatibilityTextField('机型', form.deviceModel, 100, true, errors),
+    osVersion: validateCompatibilityTextField('系统版本', form.osVersion, 80, true, errors),
+    browserName: validateCompatibilityTextField('浏览器', form.browserName, 80, true, errors),
+    browserVersion: validateCompatibilityTextField('浏览器版本', form.browserVersion, 80, false, errors),
+    notes: validateCompatibilityNotes(form.notes, errors),
+  };
+  const viewerOutcomes = compatibilityViewerOptions.map((option) => form.viewers[option.id] ?? 'not-tested');
+
+  if (!compatibilityOsNameValues.includes(form.osName)) {
+    errors.push('系统类型无效，请重新选择系统。');
+  }
+
+  if (!compatibilityDownloadResultValues.includes(form.downloadResult)) {
+    errors.push('下载结果无效，请重新选择下载状态。');
+  }
+
+  if (!compatibilityTransferPathValues.includes(form.transferPath)) {
+    errors.push('传输路径无效，请重新选择路径。');
+  }
+
+  if (viewerOutcomes.some((outcome) => !compatibilityViewerOutcomeValues.includes(outcome))) {
+    errors.push('查看结果包含无效选项，请重新选择。');
+  }
+
+  if (!viewerOutcomes.some((outcome) => outcome !== 'not-tested')) {
+    errors.push('请至少填写一个查看结果，不能全部保持“未测”。');
+  }
+
+  return { errors, text };
+}
+
+function validateCompatibilityTextField(
+  label: string,
+  value: string,
+  maxLength: number,
+  required: boolean,
+  errors: string[],
+): string {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    if (required) {
+      errors.push(`${label}不能为空。`);
+    }
+
+    return '';
+  }
+
+  if (trimmed.length > maxLength) {
+    errors.push(`${label}不能超过 ${maxLength} 个字符。`);
+  }
+
+  if (compatibilityControlCharacterPattern.test(trimmed)) {
+    errors.push(`${label}包含不可见控制字符，请删除后重试。`);
+  } else if (!compatibilityMeaningfulTextPattern.test(trimmed) || !compatibilityTextPattern.test(trimmed)) {
+    errors.push(`${label}格式不正确，请使用中英文、数字、空格或 . _ + - / () 等常用字符。`);
+  }
+
+  return trimmed;
+}
+
+function validateCompatibilityNotes(value: string, errors: string[]): string {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (trimmed.length > 500) {
+    errors.push('备注不能超过 500 个字符。');
+  }
+
+  if (compatibilityControlCharacterPattern.test(trimmed)) {
+    errors.push('备注包含不可见控制字符，请删除后重试。');
+  }
+
+  return trimmed;
 }
 
 function detectOsName(userAgent: string): CompatibilityOsName {
@@ -3089,14 +3192,14 @@ function CompatibilityLabDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-3 sm:items-center sm:p-5">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/45 px-[9vw] py-[8vh] lg:p-5">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="compatibility-lab-title"
-        className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-3xl flex-col overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay sm:max-h-[calc(100vh-2.5rem)]"
+        className="flex h-[min(72vh,123vw,36rem)] w-[min(82vw,48vh,24rem)] flex-col overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay lg:h-auto lg:max-h-[min(82vh,46rem)] lg:w-[min(82vw,48rem)] lg:max-w-[48rem]"
       >
-        <div className="flex items-start justify-between gap-3 border-b-2 border-ink bg-white p-4">
+        <div className="flex items-start justify-between gap-3 border-b-2 border-ink bg-white p-3 lg:p-4">
           <div>
             <p id="compatibility-lab-title" className="flex items-center gap-2 text-sm font-black text-ink">
               <BadgeCheck size={18} className="text-[#23b7a4]" />
@@ -3117,7 +3220,7 @@ function CompatibilityLabDialog({
             <X size={17} />
           </button>
         </div>
-        <div className="min-h-0 overflow-y-auto p-4">
+        <div className="min-h-0 overflow-y-auto p-3 lg:p-4">
           <CompatibilityLabPanel
             key={downloadContext?.downloadedAt ?? 'manual'}
             downloadContext={downloadContext}
@@ -3130,25 +3233,22 @@ function CompatibilityLabDialog({
 
 function CompatibilityLabPanel({ downloadContext }: { downloadContext?: CompatibilityDownloadContext | null }) {
   const [testKit, setTestKit] = useState<CompatibilityTestKit | null>(null);
-  const [summary, setSummary] = useState<CompatibilitySummary | null>(null);
   const [form, setForm] = useState<CompatibilityFormState>(() => createInitialCompatibilityForm());
   const [status, setStatus] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitSuccessOpen, setIsSubmitSuccessOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const [testKitResponse, summaryResponse] = await Promise.all([
-        fetch(toApiUrl('/api/compatibility/test-kit'), { cache: 'no-store' }),
-        fetch(toApiUrl('/api/compatibility/summary'), { cache: 'no-store' }),
-      ]);
+      const testKitResponse = await fetch(toApiUrl('/api/compatibility/test-kit'), { cache: 'no-store' });
 
-      if (!testKitResponse.ok || !summaryResponse.ok) {
+      if (!testKitResponse.ok) {
         setStatus('兼容数据加载失败');
         return;
       }
 
       setTestKit((await testKitResponse.json()) as CompatibilityTestKit);
-      setSummary((await summaryResponse.json()) as CompatibilitySummary);
       setStatus(null);
     } catch {
       setStatus('兼容数据加载失败');
@@ -3161,6 +3261,8 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
   }, [refresh]);
 
   const updateField = <K extends keyof CompatibilityFormState>(key: K, value: CompatibilityFormState[K]) => {
+    setValidationErrors([]);
+    setStatus(null);
     setForm((current) => ({
       ...current,
       [key]: value,
@@ -3168,6 +3270,8 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
   };
 
   const updateViewer = (viewer: CompatibilityViewerId, outcome: CompatibilityViewerOutcome) => {
+    setValidationErrors([]);
+    setStatus(null);
     setForm((current) => ({
       ...current,
       viewers: {
@@ -3178,53 +3282,46 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
   };
 
   const submitReport = async () => {
+    const validation = validateCompatibilityForm(form);
+
+    if (validation.errors.length > 0) {
+      setValidationErrors(validation.errors);
+      setStatus(null);
+      return;
+    }
+
     if (!testKit) {
+      setValidationErrors([]);
       setStatus('测试样本未就绪');
       return;
     }
 
+    const viewers = compatibilityViewerOptions.map((option) => ({
+      viewer: option.id,
+      outcome: form.viewers[option.id] ?? 'not-tested',
+    }));
     const payload: CompatibilityReportInput = {
       sampleId: testKit.sampleId,
       sampleSha256: testKit.sha256,
       osName: form.osName,
       downloadResult: form.downloadResult,
       transferPath: form.transferPath,
-      viewers: compatibilityViewerOptions.map((option) => ({
-        viewer: option.id,
-        outcome: form.viewers[option.id] ?? 'not-tested',
-      })),
+      viewers,
+      deviceBrand: validation.text.deviceBrand,
+      deviceModel: validation.text.deviceModel,
+      osVersion: validation.text.osVersion,
+      browserName: validation.text.browserName,
     };
-    const deviceBrand = form.deviceBrand.trim();
-    const deviceModel = form.deviceModel.trim();
-    const osVersion = form.osVersion.trim();
-    const browserName = form.browserName.trim();
-    const browserVersion = form.browserVersion.trim();
-    const notes = form.notes.trim();
 
-    if (deviceBrand) {
-      payload.deviceBrand = deviceBrand;
+    if (validation.text.browserVersion) {
+      payload.browserVersion = validation.text.browserVersion;
     }
 
-    if (deviceModel) {
-      payload.deviceModel = deviceModel;
+    if (validation.text.notes) {
+      payload.notes = validation.text.notes;
     }
 
-    if (osVersion) {
-      payload.osVersion = osVersion;
-    }
-
-    if (browserName) {
-      payload.browserName = browserName;
-    }
-
-    if (browserVersion) {
-      payload.browserVersion = browserVersion;
-    }
-
-    if (notes) {
-      payload.notes = notes;
-    }
-
+    setValidationErrors([]);
     setIsSubmitting(true);
     setStatus('提交中');
 
@@ -3242,10 +3339,10 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
         return;
       }
 
-      const result = (await response.json()) as CompatibilitySubmitResponse;
-
-      setSummary(result.summary);
-      setStatus(`已记录 ${result.report.confidence} 级样本`);
+      setValidationErrors([]);
+      setForm(createInitialCompatibilityForm());
+      setStatus(null);
+      setIsSubmitSuccessOpen(true);
     } catch {
       setStatus('提交失败');
     } finally {
@@ -3254,11 +3351,10 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
   };
 
   const sampleUrl = testKit ? toApiUrl(testKit.downloadUrl) : null;
-  const reportCount = summary?.reportCount ?? 0;
 
   return (
-    <Panel title="机型众测" icon={<BadgeCheck size={18} />}>
-      <div className="grid gap-3">
+    <Panel title="机型众测" icon={<BadgeCheck size={18} />} compact>
+      <div className="grid min-w-0 gap-3">
         {downloadContext && (
           <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-3">
             <p className="text-xs font-black text-ink">下载已触发</p>
@@ -3268,13 +3364,13 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 lg:grid-cols-3">
           <a
             href={sampleUrl ?? undefined}
             download={testKit?.fileName ?? 'motion-photo_MP.jpg'}
             aria-disabled={!sampleUrl}
             className={[
-              'inline-flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 text-xs font-black shadow-clay-sm transition',
+              'inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 text-xs font-black shadow-clay-sm transition',
               sampleUrl ? 'bg-[#ff715b] text-white hover:-translate-y-0.5' : 'pointer-events-none bg-ink/15 text-ink/40',
             ].join(' ')}
           >
@@ -3284,7 +3380,7 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
           <a
             href={toApiUrl('/api/compatibility/reports.csv')}
             download="vidlive-compatibility-reports.csv"
-            className="inline-flex h-10 items-center justify-center rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+            className="inline-flex h-10 min-w-0 items-center justify-center rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
           >
             CSV
           </a>
@@ -3293,13 +3389,13 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
             onClick={() => {
               void refresh();
             }}
-            className="inline-flex h-10 items-center justify-center rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+            className="inline-flex h-10 min-w-0 items-center justify-center rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
           >
-            刷新 {reportCount}
+            刷新
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 lg:grid-cols-2">
           <CompatibilityTextInput
             label="品牌"
             value={form.deviceBrand}
@@ -3312,12 +3408,12 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
             placeholder="Mate / Reno"
             onChange={(value) => updateField('deviceModel', value)}
           />
-          <label className="grid gap-1 text-xs font-black text-ink/60">
+          <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
             系统
             <select
               value={form.osName}
               onChange={(event) => updateField('osName', event.target.value as CompatibilityOsName)}
-              className="h-10 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
+              className="h-10 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
             >
               <option value="Android">Android</option>
               <option value="HarmonyOS">HarmonyOS</option>
@@ -3336,12 +3432,12 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
             placeholder="Edge"
             onChange={(value) => updateField('browserName', value)}
           />
-          <label className="grid gap-1 text-xs font-black text-ink/60">
+          <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
             下载
             <select
               value={form.downloadResult}
               onChange={(event) => updateField('downloadResult', event.target.value as CompatibilityDownloadResult)}
-              className="h-10 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
+              className="h-10 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
             >
               <option value="success">成功</option>
               <option value="failed">失败</option>
@@ -3350,12 +3446,12 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
           </label>
         </div>
 
-        <label className="grid gap-1 text-xs font-black text-ink/60">
+        <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
           路径
           <select
             value={form.transferPath}
             onChange={(event) => updateField('transferPath', event.target.value as CompatibilityTransferPath)}
-            className="h-10 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
+            className="h-10 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
           >
             <option value="browser-direct">浏览器直下</option>
             <option value="usb">USB</option>
@@ -3366,11 +3462,11 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
           </select>
         </label>
 
-        <div className="grid gap-2">
+        <div className="grid min-w-0 gap-2">
           {compatibilityViewerOptions.map((option) => (
-            <div key={option.id} className="rounded-lg border-2 border-ink/15 bg-white p-2">
+            <div key={option.id} className="min-w-0 rounded-lg border-2 border-ink/15 bg-white p-2">
               <p className="mb-2 text-xs font-black text-ink">{option.label}</p>
-              <div className="grid grid-cols-4 gap-1">
+              <div className="grid min-w-0 grid-cols-2 gap-1 lg:grid-cols-4">
                 {compatibilityOutcomeOptions.map((outcome) => {
                   const active = (form.viewers[option.id] ?? 'not-tested') === outcome.id;
 
@@ -3380,7 +3476,7 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
                       type="button"
                       onClick={() => updateViewer(option.id, outcome.id)}
                       className={[
-                        'h-8 rounded-md border text-[11px] font-black transition',
+                        'h-8 min-w-0 rounded-md border px-1 text-[11px] font-black transition',
                         active
                           ? 'border-ink bg-[#d9f99d] text-ink shadow-clay-sm'
                           : 'border-ink/15 bg-[#f7f2ea] text-ink/55 hover:border-ink',
@@ -3395,15 +3491,26 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
           ))}
         </div>
 
-        <label className="grid gap-1 text-xs font-black text-ink/60">
+        <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
           备注
           <textarea
             value={form.notes}
             maxLength={500}
             onChange={(event) => updateField('notes', event.target.value)}
-            className="min-h-16 rounded-lg border-2 border-ink/15 bg-white px-3 py-2 text-sm font-semibold text-ink"
+            className="min-h-16 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-3 py-2 text-sm font-semibold text-ink"
           />
         </label>
+
+        {validationErrors.length > 0 && (
+          <div role="alert" className="grid gap-2 rounded-lg border-2 border-ink bg-[#ffe2dc] p-3">
+            <p className="text-xs font-black text-ink">请先补充以下信息</p>
+            <ul className="grid gap-1 text-xs font-bold leading-5 text-ink/70">
+              {validationErrors.map((error) => (
+                <li key={error}>- {error}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <button
           type="button"
@@ -3411,44 +3518,78 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
           onClick={() => {
             void submitReport();
           }}
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+          className="inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
         >
           <ShieldCheck size={16} />
           提交结果
         </button>
 
         {status && <p className="text-xs font-bold text-ink/60">{status}</p>}
-
-        {summary && summary.viewerStats.length > 0 && (
-          <div className="grid gap-2 rounded-lg border-2 border-ink/15 bg-[#e4f7ff] p-3">
-            <p className="text-xs font-black text-ink">众测汇总</p>
-            {summary.viewerStats.slice(0, 4).map((item) => (
-              <div key={item.viewer} className="flex items-center justify-between gap-3 text-xs font-bold text-ink/65">
-                <span>{getViewerLabel(item.viewer)}</span>
-                <span>
-                  {item.recognized}/{item.total}
-                </span>
-              </div>
-            ))}
-            {summary.environmentStats.length > 0 && (
-              <div className="mt-2 grid gap-1 border-t border-ink/10 pt-2">
-                {summary.environmentStats.slice(0, 3).map((item) => (
-                  <div key={item.key} className="grid gap-0.5 text-xs font-bold text-ink/65">
-                    <span className="truncate text-ink">
-                      {formatCompatibilityEnvironment(item.osName, item.deviceBrand, item.deviceModel)}
-                    </span>
-                    <span>
-                      {item.recognized}/{item.total}
-                      {item.hasSystemGalleryLimit ? ' · 相册限制' : ''}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
+      <CompatibilitySubmitSuccessDialog open={isSubmitSuccessOpen} onOpenChange={setIsSubmitSuccessOpen} />
     </Panel>
+  );
+}
+
+function CompatibilitySubmitSuccessDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onOpenChange(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onOpenChange, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-ink/45 p-4">
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="compatibility-submit-success-title"
+        aria-describedby="compatibility-submit-success-description"
+        className="w-[min(86vw,22rem)] rounded-lg border-2 border-ink bg-white p-4 text-center shadow-clay"
+      >
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border-2 border-ink bg-[#d9f99d] text-ink shadow-clay-sm">
+          <CheckCircle2 size={24} />
+        </div>
+        <p id="compatibility-submit-success-title" className="mt-3 text-base font-black text-ink">
+          提交成功
+        </p>
+        <p
+          id="compatibility-submit-success-description"
+          className="mx-auto mt-2 max-w-[17rem] text-sm font-bold leading-6 text-ink/65"
+        >
+          感谢您的反馈，这对我们很重要！结果已记录，我们会用于后续兼容判断。
+        </p>
+        <button
+          type="button"
+          onClick={() => onOpenChange(false)}
+          className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5"
+        >
+          知道了
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -3464,43 +3605,17 @@ function CompatibilityTextInput({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="grid gap-1 text-xs font-black text-ink/60">
+    <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
       {label}
       <input
         type="text"
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink placeholder:text-ink/30"
+        className="h-10 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink placeholder:text-ink/30"
       />
     </label>
   );
-}
-
-function getViewerLabel(viewer: CompatibilityViewerId): string {
-  const known = compatibilityViewerOptions.find((option) => option.id === viewer);
-
-  if (known) {
-    return known.label;
-  }
-
-  if (viewer === 'wechat') {
-    return '微信';
-  }
-
-  if (viewer === 'other') {
-    return '其他';
-  }
-
-  return viewer;
-}
-
-function formatCompatibilityEnvironment(
-  osName: CompatibilityOsName,
-  deviceBrand: string | undefined,
-  deviceModel: string | undefined,
-): string {
-  return [osName, deviceBrand, deviceModel].filter(Boolean).join(' / ');
 }
 
 function CloudJobPanel({
@@ -3761,10 +3876,20 @@ function TimelineMarkButton({ label, disabled, onClick }: { label: string; disab
   );
 }
 
-function Panel({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+function Panel({
+  title,
+  icon,
+  children,
+  compact = false,
+}: {
+  title: string;
+  icon: ReactNode;
+  children: ReactNode;
+  compact?: boolean;
+}) {
   return (
-    <section className="clay-card bg-white p-4">
-      <div className="mb-3 flex items-center gap-2 text-sm font-black text-ink">
+    <section className={['clay-card min-w-0 bg-white', compact ? 'p-3 lg:p-4' : 'p-4'].join(' ')}>
+      <div className={['flex items-center gap-2 text-sm font-black text-ink', compact ? 'mb-2 lg:mb-3' : 'mb-3'].join(' ')}>
         <span className="text-[#ff715b]">{icon}</span>
         {title}
       </div>
