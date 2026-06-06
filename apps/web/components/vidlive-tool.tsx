@@ -33,6 +33,15 @@ import {
   failureAdvice,
   productLimits,
   supportedInputs,
+  type CompatibilityDownloadResult,
+  type CompatibilityOsName,
+  type CompatibilityReport,
+  type CompatibilityReportInput,
+  type CompatibilitySummary,
+  type CompatibilityTestKit,
+  type CompatibilityTransferPath,
+  type CompatibilityViewerId,
+  type CompatibilityViewerOutcome,
   type ConversionDraft,
   type ExportPreset,
   type ExportPresetId,
@@ -148,6 +157,40 @@ interface KeyframeSuggestion {
   reasons: string[];
 }
 
+type CompatibilityViewerState = Record<CompatibilityViewerId, CompatibilityViewerOutcome>;
+
+interface CompatibilityFormState {
+  deviceBrand: string;
+  deviceModel: string;
+  osName: CompatibilityOsName;
+  osVersion: string;
+  browserName: string;
+  browserVersion: string;
+  downloadResult: CompatibilityDownloadResult;
+  transferPath: CompatibilityTransferPath;
+  viewers: CompatibilityViewerState;
+  notes: string;
+}
+
+interface CompatibilitySubmitResponse {
+  report: CompatibilityReport;
+  summary: CompatibilitySummary;
+}
+
+const compatibilityViewerOptions: Array<{ id: CompatibilityViewerId; label: string }> = [
+  { id: 'system-gallery', label: '系统相册' },
+  { id: 'google-photos', label: 'Google Photos' },
+  { id: 'douyin', label: '抖音' },
+  { id: 'file-manager', label: '文件管理器' },
+];
+
+const compatibilityOutcomeOptions: Array<{ id: CompatibilityViewerOutcome; label: string }> = [
+  { id: 'recognized', label: '识别' },
+  { id: 'still', label: '静态' },
+  { id: 'failed', label: '失败' },
+  { id: 'not-tested', label: '未测' },
+];
+
 function isGif(file: File): boolean {
   return file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
 }
@@ -220,6 +263,64 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, milliseconds);
   });
+}
+
+function createInitialCompatibilityForm(): CompatibilityFormState {
+  const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+
+  return {
+    deviceBrand: '',
+    deviceModel: '',
+    osName: detectOsName(userAgent),
+    osVersion: '',
+    browserName: detectBrowserName(userAgent),
+    browserVersion: '',
+    downloadResult: 'success',
+    transferPath: 'browser-direct',
+    viewers: {
+      'system-gallery': 'not-tested',
+      'google-photos': 'not-tested',
+      douyin: 'not-tested',
+      'file-manager': 'not-tested',
+      wechat: 'not-tested',
+      other: 'not-tested',
+    },
+    notes: '',
+  };
+}
+
+function detectOsName(userAgent: string): CompatibilityOsName {
+  const normalized = userAgent.toLowerCase();
+
+  if (normalized.includes('harmonyos') || normalized.includes('huawei')) {
+    return 'HarmonyOS';
+  }
+
+  if (normalized.includes('android')) {
+    return 'Android';
+  }
+
+  return 'Other';
+}
+
+function detectBrowserName(userAgent: string): string {
+  if (/EdgA?\//.test(userAgent)) {
+    return 'Edge';
+  }
+
+  if (/HuaweiBrowser\//.test(userAgent)) {
+    return '华为浏览器';
+  }
+
+  if (/HeyTapBrowser\//.test(userAgent) || /OppoBrowser\//.test(userAgent)) {
+    return '系统浏览器';
+  }
+
+  if (/Chrome\//.test(userAgent)) {
+    return 'Chrome';
+  }
+
+  return '';
 }
 
 function toApiUrl(value: string): string {
@@ -314,7 +415,6 @@ export function VidLiveTool() {
   const [exportResult, setExportResult] = useState<LocalExportResult | null>(null);
   const [cloudJob, setCloudJob] = useState<CloudJob | null>(null);
   const [cloudConsentConfirmed, setCloudConsentConfirmed] = useState(false);
-  const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
 
   const refreshCloudJob = useCallback(async (jobId: string): Promise<CloudJob | null> => {
     let response: Response;
@@ -619,30 +719,6 @@ export function VidLiveTool() {
     }
   };
 
-  const submitCompatibilityFeedback = async (savedToPhotos: boolean, lockScreenPlayed: boolean) => {
-    setFeedbackStatus('提交中');
-
-    try {
-      await fetch(toApiUrl('/api/v1/compatibility-feedback'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          presetId: draft.presetId,
-          device: 'browser',
-          iosVersion: 'unknown',
-          savedToPhotos,
-          lockScreenPlayed,
-          notes: metadata?.name ?? '',
-        }),
-      });
-      setFeedbackStatus('已记录');
-    } catch {
-      setFeedbackStatus('提交失败');
-    }
-  };
-
   return (
     <main className="min-h-screen bg-[#fff4df] text-ink">
       <section className="border-b-2 border-ink/10 bg-[#fff4df]">
@@ -803,28 +879,6 @@ export function VidLiveTool() {
                 />
               )}
 
-              {exportResult || cloudJob?.status === 'completed' ? (
-                <Panel title="安卓反馈" icon={<ShieldCheck size={18} />}>
-                  <div className="grid grid-cols-2 gap-2">
-                    <ToggleButton
-                      active={feedbackStatus === '已记录'}
-                      label="识别成功"
-                      onClick={() => {
-                        void submitCompatibilityFeedback(true, false);
-                      }}
-                    />
-                    <ToggleButton
-                      active={feedbackStatus === '提交失败'}
-                      label="未识别"
-                      onClick={() => {
-                        void submitCompatibilityFeedback(false, false);
-                      }}
-                    />
-                  </div>
-                  {feedbackStatus && <p className="mt-2 text-xs font-bold text-ink/60">{feedbackStatus}</p>}
-                </Panel>
-              ) : null}
-
               {exportResult && packageArtifact && (
                 <ExportResultPanel
                   result={exportResult}
@@ -836,6 +890,7 @@ export function VidLiveTool() {
 
             <aside className="flex min-w-0 flex-col gap-4">
               <SidebarInfoCarousel />
+              <CompatibilityLabPanel />
 
               <Panel title="处理模式" icon={<CloudOff size={18} />}>
                 <div className="grid grid-cols-2 gap-2">
@@ -1572,6 +1627,372 @@ function ExportResultPanel({
       </div>
     </Panel>
   );
+}
+
+function CompatibilityLabPanel() {
+  const [testKit, setTestKit] = useState<CompatibilityTestKit | null>(null);
+  const [summary, setSummary] = useState<CompatibilitySummary | null>(null);
+  const [form, setForm] = useState<CompatibilityFormState>(() => createInitialCompatibilityForm());
+  const [status, setStatus] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [testKitResponse, summaryResponse] = await Promise.all([
+        fetch(toApiUrl('/api/compatibility/test-kit'), { cache: 'no-store' }),
+        fetch(toApiUrl('/api/compatibility/summary'), { cache: 'no-store' }),
+      ]);
+
+      if (!testKitResponse.ok || !summaryResponse.ok) {
+        setStatus('兼容数据加载失败');
+        return;
+      }
+
+      setTestKit((await testKitResponse.json()) as CompatibilityTestKit);
+      setSummary((await summaryResponse.json()) as CompatibilitySummary);
+      setStatus(null);
+    } catch {
+      setStatus('兼容数据加载失败');
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Load external compatibility lab state after mount.
+    void refresh();
+  }, [refresh]);
+
+  const updateField = <K extends keyof CompatibilityFormState>(key: K, value: CompatibilityFormState[K]) => {
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  };
+
+  const updateViewer = (viewer: CompatibilityViewerId, outcome: CompatibilityViewerOutcome) => {
+    setForm((current) => ({
+      ...current,
+      viewers: {
+        ...current.viewers,
+        [viewer]: outcome,
+      },
+    }));
+  };
+
+  const submitReport = async () => {
+    if (!testKit) {
+      setStatus('测试样本未就绪');
+      return;
+    }
+
+    const payload: CompatibilityReportInput = {
+      sampleId: testKit.sampleId,
+      sampleSha256: testKit.sha256,
+      osName: form.osName,
+      downloadResult: form.downloadResult,
+      transferPath: form.transferPath,
+      viewers: compatibilityViewerOptions.map((option) => ({
+        viewer: option.id,
+        outcome: form.viewers[option.id] ?? 'not-tested',
+      })),
+    };
+    const deviceBrand = form.deviceBrand.trim();
+    const deviceModel = form.deviceModel.trim();
+    const osVersion = form.osVersion.trim();
+    const browserName = form.browserName.trim();
+    const browserVersion = form.browserVersion.trim();
+    const notes = form.notes.trim();
+
+    if (deviceBrand) {
+      payload.deviceBrand = deviceBrand;
+    }
+
+    if (deviceModel) {
+      payload.deviceModel = deviceModel;
+    }
+
+    if (osVersion) {
+      payload.osVersion = osVersion;
+    }
+
+    if (browserName) {
+      payload.browserName = browserName;
+    }
+
+    if (browserVersion) {
+      payload.browserVersion = browserVersion;
+    }
+
+    if (notes) {
+      payload.notes = notes;
+    }
+
+    setIsSubmitting(true);
+    setStatus('提交中');
+
+    try {
+      const response = await fetch(toApiUrl('/api/compatibility/reports'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        setStatus(response.status === 429 ? '提交太频繁' : '提交失败');
+        return;
+      }
+
+      const result = (await response.json()) as CompatibilitySubmitResponse;
+
+      setSummary(result.summary);
+      setStatus(`已记录 ${result.report.confidence} 级样本`);
+    } catch {
+      setStatus('提交失败');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const sampleUrl = testKit ? toApiUrl(testKit.downloadUrl) : null;
+  const reportCount = summary?.reportCount ?? 0;
+
+  return (
+    <Panel title="机型众测" icon={<BadgeCheck size={18} />}>
+      <div className="grid gap-3">
+        <div className="grid grid-cols-3 gap-2">
+          <a
+            href={sampleUrl ?? undefined}
+            download={testKit?.fileName ?? 'motion-photo_MP.jpg'}
+            aria-disabled={!sampleUrl}
+            className={[
+              'inline-flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 text-xs font-black shadow-clay-sm transition',
+              sampleUrl ? 'bg-[#ff715b] text-white hover:-translate-y-0.5' : 'pointer-events-none bg-ink/15 text-ink/40',
+            ].join(' ')}
+          >
+            <Download size={14} />
+            下载样本
+          </a>
+          <a
+            href={toApiUrl('/api/compatibility/reports.csv')}
+            download="vidlive-compatibility-reports.csv"
+            className="inline-flex h-10 items-center justify-center rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+          >
+            CSV
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              void refresh();
+            }}
+            className="inline-flex h-10 items-center justify-center rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+          >
+            刷新 {reportCount}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <CompatibilityTextInput
+            label="品牌"
+            value={form.deviceBrand}
+            placeholder="Huawei"
+            onChange={(value) => updateField('deviceBrand', value)}
+          />
+          <CompatibilityTextInput
+            label="机型"
+            value={form.deviceModel}
+            placeholder="Mate / Reno"
+            onChange={(value) => updateField('deviceModel', value)}
+          />
+          <label className="grid gap-1 text-xs font-black text-ink/60">
+            系统
+            <select
+              value={form.osName}
+              onChange={(event) => updateField('osName', event.target.value as CompatibilityOsName)}
+              className="h-10 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
+            >
+              <option value="Android">Android</option>
+              <option value="HarmonyOS">HarmonyOS</option>
+              <option value="Other">Other</option>
+            </select>
+          </label>
+          <CompatibilityTextInput
+            label="版本"
+            value={form.osVersion}
+            placeholder="14 / 4.2"
+            onChange={(value) => updateField('osVersion', value)}
+          />
+          <CompatibilityTextInput
+            label="浏览器"
+            value={form.browserName}
+            placeholder="Edge"
+            onChange={(value) => updateField('browserName', value)}
+          />
+          <label className="grid gap-1 text-xs font-black text-ink/60">
+            下载
+            <select
+              value={form.downloadResult}
+              onChange={(event) => updateField('downloadResult', event.target.value as CompatibilityDownloadResult)}
+              className="h-10 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
+            >
+              <option value="success">成功</option>
+              <option value="failed">失败</option>
+              <option value="unknown">未知</option>
+            </select>
+          </label>
+        </div>
+
+        <label className="grid gap-1 text-xs font-black text-ink/60">
+          路径
+          <select
+            value={form.transferPath}
+            onChange={(event) => updateField('transferPath', event.target.value as CompatibilityTransferPath)}
+            className="h-10 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
+          >
+            <option value="browser-direct">浏览器直下</option>
+            <option value="usb">USB</option>
+            <option value="wechat">微信</option>
+            <option value="qq">QQ</option>
+            <option value="cloud-drive">网盘</option>
+            <option value="unknown">未知</option>
+          </select>
+        </label>
+
+        <div className="grid gap-2">
+          {compatibilityViewerOptions.map((option) => (
+            <div key={option.id} className="rounded-lg border-2 border-ink/15 bg-white p-2">
+              <p className="mb-2 text-xs font-black text-ink">{option.label}</p>
+              <div className="grid grid-cols-4 gap-1">
+                {compatibilityOutcomeOptions.map((outcome) => {
+                  const active = (form.viewers[option.id] ?? 'not-tested') === outcome.id;
+
+                  return (
+                    <button
+                      key={outcome.id}
+                      type="button"
+                      onClick={() => updateViewer(option.id, outcome.id)}
+                      className={[
+                        'h-8 rounded-md border text-[11px] font-black transition',
+                        active
+                          ? 'border-ink bg-[#d9f99d] text-ink shadow-clay-sm'
+                          : 'border-ink/15 bg-[#f7f2ea] text-ink/55 hover:border-ink',
+                      ].join(' ')}
+                    >
+                      {outcome.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <label className="grid gap-1 text-xs font-black text-ink/60">
+          备注
+          <textarea
+            value={form.notes}
+            maxLength={500}
+            onChange={(event) => updateField('notes', event.target.value)}
+            className="min-h-16 rounded-lg border-2 border-ink/15 bg-white px-3 py-2 text-sm font-semibold text-ink"
+          />
+        </label>
+
+        <button
+          type="button"
+          disabled={isSubmitting}
+          onClick={() => {
+            void submitReport();
+          }}
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+        >
+          <ShieldCheck size={16} />
+          提交结果
+        </button>
+
+        {status && <p className="text-xs font-bold text-ink/60">{status}</p>}
+
+        {summary && summary.viewerStats.length > 0 && (
+          <div className="grid gap-2 rounded-lg border-2 border-ink/15 bg-[#e4f7ff] p-3">
+            <p className="text-xs font-black text-ink">众测汇总</p>
+            {summary.viewerStats.slice(0, 4).map((item) => (
+              <div key={item.viewer} className="flex items-center justify-between gap-3 text-xs font-bold text-ink/65">
+                <span>{getViewerLabel(item.viewer)}</span>
+                <span>
+                  {item.recognized}/{item.total}
+                </span>
+              </div>
+            ))}
+            {summary.environmentStats.length > 0 && (
+              <div className="mt-2 grid gap-1 border-t border-ink/10 pt-2">
+                {summary.environmentStats.slice(0, 3).map((item) => (
+                  <div key={item.key} className="grid gap-0.5 text-xs font-bold text-ink/65">
+                    <span className="truncate text-ink">
+                      {formatCompatibilityEnvironment(item.osName, item.deviceBrand, item.deviceModel)}
+                    </span>
+                    <span>
+                      {item.recognized}/{item.total}
+                      {item.hasSystemGalleryLimit ? ' · 相册限制' : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function CompatibilityTextInput({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid gap-1 text-xs font-black text-ink/60">
+      {label}
+      <input
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-10 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink placeholder:text-ink/30"
+      />
+    </label>
+  );
+}
+
+function getViewerLabel(viewer: CompatibilityViewerId): string {
+  const known = compatibilityViewerOptions.find((option) => option.id === viewer);
+
+  if (known) {
+    return known.label;
+  }
+
+  if (viewer === 'wechat') {
+    return '微信';
+  }
+
+  if (viewer === 'other') {
+    return '其他';
+  }
+
+  return viewer;
+}
+
+function formatCompatibilityEnvironment(
+  osName: CompatibilityOsName,
+  deviceBrand: string | undefined,
+  deviceModel: string | undefined,
+): string {
+  return [osName, deviceBrand, deviceModel].filter(Boolean).join(' / ');
 }
 
 function CloudJobPanel({

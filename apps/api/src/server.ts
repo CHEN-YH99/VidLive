@@ -1,6 +1,7 @@
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerCompatibilityRoutes } from './modules/compatibility/compatibility.routes.js';
 import { registerConversionRoutes } from './modules/conversions/conversion.routes.js';
 import { registerHealthRoutes } from './modules/health/health.routes.js';
 import { registerPhaseZeroRoutes } from './modules/phase0/phase0.routes.js';
@@ -29,6 +30,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   registerHealthRoutes(server);
   registerPhaseZeroRoutes(server, config);
   registerConversionRoutes(server, config);
+  registerCompatibilityRoutes(server, config);
   registerV1Routes(server, config);
 
   server.setErrorHandler((error, _request, reply) => {

@@ -212,6 +212,98 @@ export interface CompatibilityRow {
   note: string;
 }
 
+export type CompatibilityOsName = 'Android' | 'HarmonyOS' | 'Other';
+
+export type CompatibilityDownloadResult = 'success' | 'failed' | 'unknown';
+
+export type CompatibilityTransferPath =
+  | 'browser-direct'
+  | 'usb'
+  | 'wechat'
+  | 'qq'
+  | 'cloud-drive'
+  | 'unknown';
+
+export type CompatibilityViewerId =
+  | 'system-gallery'
+  | 'google-photos'
+  | 'douyin'
+  | 'file-manager'
+  | 'wechat'
+  | 'other';
+
+export type CompatibilityViewerOutcome = 'recognized' | 'still' | 'failed' | 'not-tested';
+
+export type CompatibilityConfidence = 'A' | 'B' | 'C' | 'D';
+
+export interface CompatibilityViewerReport {
+  viewer: CompatibilityViewerId;
+  outcome: CompatibilityViewerOutcome;
+  appVersion?: string;
+  note?: string;
+}
+
+export interface CompatibilityReportInput {
+  sampleId: string;
+  sampleSha256?: string;
+  deviceBrand?: string;
+  deviceModel?: string;
+  osName: CompatibilityOsName;
+  osVersion?: string;
+  browserName?: string;
+  browserVersion?: string;
+  downloadResult: CompatibilityDownloadResult;
+  transferPath: CompatibilityTransferPath;
+  viewers: CompatibilityViewerReport[];
+  notes?: string;
+}
+
+export interface CompatibilityReport extends CompatibilityReportInput {
+  id: string;
+  createdAt: string;
+  confidence: CompatibilityConfidence;
+  userAgent: string;
+}
+
+export interface CompatibilityViewerSummary {
+  viewer: CompatibilityViewerId;
+  total: number;
+  recognized: number;
+  still: number;
+  failed: number;
+  notTested: number;
+}
+
+export interface CompatibilityEnvironmentSummary {
+  key: string;
+  osName: CompatibilityOsName;
+  osVersion?: string;
+  deviceBrand?: string;
+  deviceModel?: string;
+  total: number;
+  recognized: number;
+  hasSystemGalleryLimit: boolean;
+}
+
+export interface CompatibilitySummary {
+  sampleId: string;
+  reportCount: number;
+  viewerStats: CompatibilityViewerSummary[];
+  environmentStats: CompatibilityEnvironmentSummary[];
+  latestReports: CompatibilityReport[];
+}
+
+export interface CompatibilityTestKit {
+  sampleId: string;
+  fileName: string;
+  downloadUrl: string;
+  sha256: string;
+  sizeBytes: number;
+  generatedAt: string;
+}
+
+export const compatibilitySampleId = 'android-motion-photo-v1';
+
 export interface ExitCriterion {
   id: string;
   title: string;
