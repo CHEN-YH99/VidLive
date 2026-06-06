@@ -118,6 +118,7 @@ const presetHelpText: Record<ExportPresetId, string> = {
 };
 
 type CloudJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
+type GenerationStatus = 'generating' | 'complete' | 'failed';
 
 interface CloudJob {
   id: string;
@@ -424,6 +425,8 @@ export function VidLiveTool() {
   const [failureReason, setFailureReason] = useState<FailureReason | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationDialogOpen, setGenerationDialogOpen] = useState(false);
+  const [generationFeedbackAvailable, setGenerationFeedbackAvailable] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [exportResult, setExportResult] = useState<LocalExportResult | null>(null);
   const [cloudJob, setCloudJob] = useState<CloudJob | null>(null);
@@ -431,6 +434,18 @@ export function VidLiveTool() {
   const [compatibilityDialogOpen, setCompatibilityDialogOpen] = useState(false);
   const [lastSuccessfulDownload, setLastSuccessfulDownload] = useState<CompatibilityDownloadContext | null>(null);
   const [downloadBusySource, setDownloadBusySource] = useState<CloudDownloadRequest['source'] | null>(null);
+
+  const clearGenerationFeedback = useCallback((closeDialog = true) => {
+    setExportResult(null);
+    setCloudJob(null);
+    setGenerationProgress(0);
+    setGenerationFeedbackAvailable(false);
+    setFailureReason(null);
+
+    if (closeDialog) {
+      setGenerationDialogOpen(false);
+    }
+  }, []);
 
   const openCompatibilityLab = useCallback((context: Omit<CompatibilityDownloadContext, 'downloadedAt'>) => {
     setLastSuccessfulDownload({
@@ -553,6 +568,7 @@ export function VidLiveTool() {
       const rejectionReason = getDropError(rejections);
 
       if (rejectionReason) {
+        clearGenerationFeedback();
         setFailureReason(rejectionReason);
         return;
       }
@@ -560,6 +576,7 @@ export function VidLiveTool() {
       const selectedFile = acceptedFiles[0];
 
       if (!selectedFile || !isSupportedInput(selectedFile)) {
+        clearGenerationFeedback();
         setFailureReason('unsupported-format');
         return;
       }
@@ -569,10 +586,8 @@ export function VidLiveTool() {
       setCoverUrl(null);
       setPreviewPlaybackFailed(false);
       setPlayheadSeconds(0);
-      setExportResult(null);
-      setCloudJob(null);
+      clearGenerationFeedback();
       setCloudConsentConfirmed(false);
-      setGenerationProgress(0);
 
       const objectUrl = URL.createObjectURL(selectedFile);
 
@@ -624,7 +639,7 @@ export function VidLiveTool() {
         setIsReading(false);
       }
     },
-    [draft.presetId],
+    [clearGenerationFeedback, draft.presetId],
   );
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
@@ -656,16 +671,31 @@ export function VidLiveTool() {
     file && previewUrl && metadata && !isReading && !isGenerating && !cloudBusy && !cloudConsentRequired,
   );
   const packageArtifact = exportResult?.artifacts.find((artifact) => artifact.kind === 'package') ?? null;
+  const hasGenerationOutput = Boolean(exportResult || cloudJob);
+  const hasCompletedGenerationOutput = Boolean(exportResult || cloudJob?.status === 'completed');
+  const generationFailed = Boolean(
+    generationFeedbackAvailable &&
+      !isGenerating &&
+      !cloudBusy &&
+      ((currentFailure && !hasCompletedGenerationOutput) ||
+        cloudJob?.status === 'failed' ||
+        cloudJob?.status === 'expired'),
+  );
+  const generationStatus = isGenerating || cloudBusy ? 'generating' : generationFailed ? 'failed' : 'complete';
+  const shouldShowGenerationTrigger = Boolean(
+    generationFeedbackAvailable || isGenerating || cloudBusy || generationProgress > 0 || hasGenerationOutput,
+  );
+  const cloudDownloadUrl = cloudJob?.artifact ? toApiUrl(cloudJob.artifact.downloadUrl) : null;
+  const androidMotionPhotoUrl = cloudJob?.androidMotionPhoto ? toApiUrl(cloudJob.androidMotionPhoto.downloadUrl) : null;
+  const previewPhotoUrl = cloudJob?.previewPhoto ? toApiUrl(cloudJob.previewPhoto.downloadUrl) : null;
 
   const updatePreset = (presetId: ExportPresetId) => {
-    setExportResult(null);
-    setCloudJob(null);
+    clearGenerationFeedback();
     setDraft((current) => getDefaultDraftForPreset(presetId, current, metadata));
   };
 
   const updateStart = (value: number) => {
-    setExportResult(null);
-    setCloudJob(null);
+    clearGenerationFeedback();
     setDraft((current) => {
       const preset = exportPresets[current.presetId];
       const nextClipDuration = getTargetClipDuration(preset, sourceDurationMax);
@@ -683,8 +713,7 @@ export function VidLiveTool() {
   };
 
   const updateKeyframe = (value: number) => {
-    setExportResult(null);
-    setCloudJob(null);
+    clearGenerationFeedback();
     setDraft((current) => ({
       ...current,
       keyframeSeconds: clamp(value, current.startSeconds, current.endSeconds),
@@ -734,18 +763,22 @@ export function VidLiveTool() {
 
   const handleGenerate = async () => {
     if (!file || !previewUrl || !metadata) {
+      clearGenerationFeedback();
       setFailureReason('metadata-read-failed');
       return;
     }
 
     if (draft.mode === 'cloud' && !cloudConsentConfirmed) {
+      clearGenerationFeedback();
       setFailureReason('cloud-required');
       return;
     }
 
     setFailureReason(null);
+    setGenerationFeedbackAvailable(true);
     setExportResult(null);
     setCloudJob(null);
+    setGenerationDialogOpen(true);
     setIsGenerating(true);
     setGenerationProgress(draft.mode === 'cloud' ? 8 : 18);
 
@@ -766,6 +799,7 @@ export function VidLiveTool() {
         }
 
         const nextJob = (await response.json()) as CloudJob;
+        setGenerationFeedbackAvailable(true);
         setCloudJob(nextJob);
         setGenerationProgress(nextJob.progress);
         await pollCloudJobUntilSettled(nextJob.id);
@@ -775,10 +809,12 @@ export function VidLiveTool() {
       setGenerationProgress(42);
       const result = await generateLocalExport(file, previewUrl, draft, metadata);
       setGenerationProgress(100);
+      setGenerationFeedbackAvailable(true);
       setExportResult(result);
     } catch (error) {
       setGenerationProgress(0);
-      setFailureReason(getFailureFromExportError(error));
+      setGenerationFeedbackAvailable(true);
+      setFailureReason(draft.mode === 'cloud' ? 'cloud-timeout' : getFailureFromExportError(error));
     } finally {
       setIsGenerating(false);
     }
@@ -820,7 +856,9 @@ export function VidLiveTool() {
                 onPlaybackTimeChange={setPlayheadSeconds}
               />
 
-              {currentFailure && <FailureNotice title={currentFailure.title} action={currentFailure.action} />}
+              {currentFailure && !generationFeedbackAvailable && (
+                <FailureNotice title={currentFailure.title} action={currentFailure.action} />
+              )}
 
               <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <Metric label="文件" value={metadata?.name ?? '未选择'} tone="coral" />
@@ -916,42 +954,6 @@ export function VidLiveTool() {
                 )}
               </section>
 
-              {(isGenerating || generationProgress > 0 || cloudBusy) && (
-                <ProgressBar
-                  value={generationProgress}
-                  label={draft.mode === 'cloud' || cloudJob ? '安卓实况图生成中' : isGenerating ? '本地打包中' : '生成完成'}
-                />
-              )}
-
-              {cloudJob && (
-                <CloudJobPanel
-                  job={cloudJob}
-                  downloadUrl={cloudJob.artifact ? toApiUrl(cloudJob.artifact.downloadUrl) : null}
-                  androidMotionPhotoUrl={
-                    cloudJob.androidMotionPhoto ? toApiUrl(cloudJob.androidMotionPhoto.downloadUrl) : null
-                  }
-                  previewPhotoUrl={cloudJob.previewPhoto ? toApiUrl(cloudJob.previewPhoto.downloadUrl) : null}
-                  downloadingSource={downloadBusySource}
-                  onDownload={(download) => {
-                    void downloadCloudArtifact(download);
-                  }}
-                  onDelete={async () => {
-                    await fetch(toApiUrl(`/api/conversions/cloud-jobs/${cloudJob.id}`), {
-                      method: 'DELETE',
-                    });
-                    setCloudJob(null);
-                    setGenerationProgress(0);
-                  }}
-                />
-              )}
-
-              {exportResult && packageArtifact && (
-                <ExportResultPanel
-                  result={exportResult}
-                  packageArtifact={packageArtifact}
-                  onDownload={downloadLocalArtifact}
-                />
-              )}
             </div>
 
             <aside className="flex min-w-0 flex-col gap-4">
@@ -965,8 +967,7 @@ export function VidLiveTool() {
                     description="不上传素材"
                     tooltip={modeHelpText.local}
                     onClick={() => {
-                      setExportResult(null);
-                      setCloudJob(null);
+                      clearGenerationFeedback();
                       setCloudConsentConfirmed(false);
                       setDraft((current) => ({ ...current, mode: 'local' }));
                       setFailureReason(null);
@@ -978,8 +979,7 @@ export function VidLiveTool() {
                     description="安卓实况图"
                     tooltip={modeHelpText.cloud}
                     onClick={() => {
-                      setExportResult(null);
-                      setCloudJob(null);
+                      clearGenerationFeedback();
                       setCloudConsentConfirmed(false);
                       setDraft((current) => ({ ...current, mode: 'cloud' }));
                       setFailureReason(null);
@@ -1008,8 +1008,7 @@ export function VidLiveTool() {
                       key={ratio.id}
                       type="button"
                       onClick={() => {
-                        setExportResult(null);
-                        setCloudJob(null);
+                        clearGenerationFeedback();
                         setDraft((current) => ({ ...current, aspectRatioId: ratio.id }));
                       }}
                       className={[
@@ -1028,8 +1027,7 @@ export function VidLiveTool() {
                     active={draft.fitMode === 'cover'}
                     label="裁切填满"
                     onClick={() => {
-                      setExportResult(null);
-                      setCloudJob(null);
+                      clearGenerationFeedback();
                       setDraft((current) => ({ ...current, fitMode: 'cover' as FitMode }));
                     }}
                   />
@@ -1037,8 +1035,7 @@ export function VidLiveTool() {
                     active={draft.fitMode === 'contain'}
                     label="补背景"
                     onClick={() => {
-                      setExportResult(null);
-                      setCloudJob(null);
+                      clearGenerationFeedback();
                       setDraft((current) => ({ ...current, fitMode: 'contain' as FitMode }));
                     }}
                   />
@@ -1056,8 +1053,7 @@ export function VidLiveTool() {
                         aria-label={`背景色 ${option.label}`}
                         title={option.label}
                         onClick={() => {
-                          setExportResult(null);
-                          setCloudJob(null);
+                          clearGenerationFeedback();
                           setDraft((current) => ({ ...current, backgroundColor: option.value }));
                         }}
                         className={[
@@ -1074,8 +1070,7 @@ export function VidLiveTool() {
                 <button
                   type="button"
                   onClick={() => {
-                    setExportResult(null);
-                    setCloudJob(null);
+                    clearGenerationFeedback();
                     setDraft((current) => ({ ...current, muted: !current.muted }));
                   }}
                   className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border-2 border-ink/15 bg-white text-sm font-black text-ink transition hover:border-ink"
@@ -1088,8 +1083,7 @@ export function VidLiveTool() {
                     active={draft.rotationDegrees !== 0}
                     label={`${draft.rotationDegrees}°`}
                     onClick={() => {
-                      setExportResult(null);
-                      setCloudJob(null);
+                      clearGenerationFeedback();
                       setDraft((current) => ({
                         ...current,
                         rotationDegrees: (((current.rotationDegrees + 90) % 360) as 0 | 90 | 180 | 270),
@@ -1100,8 +1094,7 @@ export function VidLiveTool() {
                     active={draft.flipHorizontal}
                     label="水平翻转"
                     onClick={() => {
-                      setExportResult(null);
-                      setCloudJob(null);
+                      clearGenerationFeedback();
                       setDraft((current) => ({ ...current, flipHorizontal: !current.flipHorizontal }));
                     }}
                   />
@@ -1109,8 +1102,7 @@ export function VidLiveTool() {
                     active={draft.flipVertical}
                     label="垂直翻转"
                     onClick={() => {
-                      setExportResult(null);
-                      setCloudJob(null);
+                      clearGenerationFeedback();
                       setDraft((current) => ({ ...current, flipVertical: !current.flipVertical }));
                     }}
                   />
@@ -1123,8 +1115,7 @@ export function VidLiveTool() {
                   step={5}
                   suffix="%"
                   onChange={(value) => {
-                    setExportResult(null);
-                    setCloudJob(null);
+                    clearGenerationFeedback();
                     setDraft((current) => ({ ...current, brightness: value }));
                   }}
                 />
@@ -1136,8 +1127,7 @@ export function VidLiveTool() {
                   step={5}
                   suffix="%"
                   onChange={(value) => {
-                    setExportResult(null);
-                    setCloudJob(null);
+                    clearGenerationFeedback();
                     setDraft((current) => ({ ...current, contrast: value }));
                   }}
                 />
@@ -1149,8 +1139,7 @@ export function VidLiveTool() {
                   step={5}
                   suffix="%"
                   onChange={(value) => {
-                    setExportResult(null);
-                    setCloudJob(null);
+                    clearGenerationFeedback();
                     setDraft((current) => ({ ...current, saturation: value }));
                   }}
                 />
@@ -1191,6 +1180,42 @@ export function VidLiveTool() {
           <CompatibilityLabTriggerButton
             reportCountLabel={lastSuccessfulDownload ? '已下载' : '众测'}
             onClick={() => setCompatibilityDialogOpen(true)}
+          />
+          {shouldShowGenerationTrigger && (
+            <GenerationStatusButton
+              status={generationStatus}
+              progress={generationProgress}
+              onClick={() => setGenerationDialogOpen(true)}
+            />
+          )}
+          <GenerationDialog
+            open={generationDialogOpen && shouldShowGenerationTrigger}
+            status={generationStatus}
+            mode={draft.mode}
+            progress={generationProgress}
+            failure={generationFeedbackAvailable ? currentFailure : null}
+            cloudJob={cloudJob}
+            downloadUrl={cloudDownloadUrl}
+            androidMotionPhotoUrl={androidMotionPhotoUrl}
+            previewPhotoUrl={previewPhotoUrl}
+            exportResult={exportResult}
+            packageArtifact={packageArtifact}
+            downloadingSource={downloadBusySource}
+            onOpenChange={setGenerationDialogOpen}
+            onCloudDownload={(download) => {
+              void downloadCloudArtifact(download);
+            }}
+            onLocalDownload={downloadLocalArtifact}
+            onDeleteCloudJob={async () => {
+              if (!cloudJob) {
+                return;
+              }
+
+              await fetch(toApiUrl(`/api/conversions/cloud-jobs/${cloudJob.id}`), {
+                method: 'DELETE',
+              });
+              clearGenerationFeedback();
+            }}
           />
           <CompatibilityLabDialog
             open={compatibilityDialogOpen}
@@ -1700,6 +1725,212 @@ function ExportResultPanel({
           ))}
       </div>
     </Panel>
+  );
+}
+
+function GenerationStatusButton({
+  status,
+  progress,
+  onClick,
+}: {
+  status: GenerationStatus;
+  progress: number;
+  onClick: () => void;
+}) {
+  const safeProgress = clamp(progress, 0, 100);
+  const copy = {
+    generating: {
+      label: '生成中',
+      detail: `${safeProgress}%`,
+      className: 'bg-[#e4f7ff] text-ink',
+      icon: <Loader2 size={15} className="animate-spin text-[#6aa9ff]" />,
+    },
+    complete: {
+      label: '已生成',
+      detail: '查看下载',
+      className: 'bg-[#d9f99d] text-ink',
+      icon: <CheckCircle2 size={15} className="text-[#23b7a4]" />,
+    },
+    failed: {
+      label: '生成失败',
+      detail: '查看原因',
+      className: 'bg-[#ffe2dc] text-ink',
+      icon: <AlertTriangle size={15} className="text-[#ff715b]" />,
+    },
+  }[status];
+
+  return (
+    <button
+      type="button"
+      aria-live="polite"
+      onClick={onClick}
+      className={`fixed bottom-4 left-4 z-40 inline-flex h-11 max-w-[calc(100vw-2rem)] items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 text-xs font-black shadow-clay transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#23b7a4] ${copy.className}`}
+    >
+      {copy.icon}
+      <span>{copy.label}</span>
+      <span className="rounded-md border border-ink/15 bg-white/80 px-2 py-0.5 text-[10px] text-ink/65">
+        {copy.detail}
+      </span>
+    </button>
+  );
+}
+
+function GenerationDialog({
+  open,
+  status,
+  mode,
+  progress,
+  failure,
+  cloudJob,
+  downloadUrl,
+  androidMotionPhotoUrl,
+  previewPhotoUrl,
+  exportResult,
+  packageArtifact,
+  downloadingSource,
+  onOpenChange,
+  onCloudDownload,
+  onLocalDownload,
+  onDeleteCloudJob,
+}: {
+  open: boolean;
+  status: GenerationStatus;
+  mode: ConversionDraft['mode'];
+  progress: number;
+  failure: { title: string; action: string } | null;
+  cloudJob: CloudJob | null;
+  downloadUrl: string | null;
+  androidMotionPhotoUrl: string | null;
+  previewPhotoUrl: string | null;
+  exportResult: LocalExportResult | null;
+  packageArtifact: LocalExportArtifact | null;
+  downloadingSource: CloudDownloadRequest['source'] | null;
+  onOpenChange: (open: boolean) => void;
+  onCloudDownload: (download: CloudDownloadRequest) => void;
+  onLocalDownload: (artifact: LocalExportArtifact) => void;
+  onDeleteCloudJob: () => Promise<void>;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onOpenChange(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onOpenChange, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  const isCloudMode = mode === 'cloud' || Boolean(cloudJob);
+  const safeProgress = clamp(progress, 0, 100);
+  const title =
+    status === 'generating'
+      ? isCloudMode
+        ? '正在生成安卓实况图'
+        : '正在生成文件'
+      : status === 'failed'
+        ? '生成失败'
+        : '生成完成';
+  const description =
+    status === 'generating'
+      ? '进度和后续结果都会留在这里，关闭弹窗后也能从左下角重新打开。'
+      : status === 'failed'
+        ? '这次没有拿到可用结果，先看原因再调整素材。'
+        : '文件已经生成，直接在这里预览和下载。';
+  const titleIcon =
+    status === 'generating' ? (
+      <Loader2 size={18} className="animate-spin text-[#6aa9ff]" />
+    ) : status === 'failed' ? (
+      <AlertTriangle size={18} className="text-[#ff715b]" />
+    ) : (
+      <CheckCircle2 size={18} className="text-[#23b7a4]" />
+    );
+  const progressLabel =
+    status === 'failed'
+      ? '生成中断'
+      : status === 'complete'
+        ? '生成完成'
+        : isCloudMode
+          ? '安卓实况图生成中'
+          : '本地打包中';
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-ink/45 p-3 sm:items-center sm:p-5">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="generation-dialog-title"
+        className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-3xl flex-col overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay sm:max-h-[calc(100vh-2.5rem)]"
+      >
+        <div className="flex items-start justify-between gap-3 border-b-2 border-ink bg-white p-4">
+          <div>
+            <p id="generation-dialog-title" className="flex items-center gap-2 text-sm font-black text-ink">
+              {titleIcon}
+              {title}
+            </p>
+            <p className="mt-1 text-xs font-bold leading-5 text-ink/60">{description}</p>
+          </div>
+          <button
+            type="button"
+            aria-label="关闭生成状态"
+            onClick={() => onOpenChange(false)}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <div className="min-h-0 overflow-y-auto p-4">
+          <div className="grid gap-4">
+            {(status === 'generating' || safeProgress > 0) && (
+              <ProgressBar value={safeProgress} label={progressLabel} />
+            )}
+
+            {status === 'failed' &&
+              (failure ? (
+                <FailureNotice title={failure.title} action={failure.action} />
+              ) : (
+                <FailureNotice title="生成失败" action="请调整素材后重新生成，或稍后再试。" />
+              ))}
+
+            {status !== 'failed' && failure && (
+              <FailureNotice title={failure.title} action={failure.action} />
+            )}
+
+            {cloudJob && (
+              <CloudJobPanel
+                job={cloudJob}
+                downloadUrl={downloadUrl}
+                androidMotionPhotoUrl={androidMotionPhotoUrl}
+                previewPhotoUrl={previewPhotoUrl}
+                downloadingSource={downloadingSource}
+                onDownload={onCloudDownload}
+                onDelete={onDeleteCloudJob}
+              />
+            )}
+
+            {exportResult && packageArtifact && (
+              <ExportResultPanel
+                result={exportResult}
+                packageArtifact={packageArtifact}
+                onDownload={onLocalDownload}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

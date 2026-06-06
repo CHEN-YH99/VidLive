@@ -139,8 +139,8 @@ export const failureAdvice: Record<FailureReason, FailureAdvice> = {
   },
   'cloud-timeout': {
     reason: 'cloud-timeout',
-    title: '云端任务超时',
-    action: '缩短素材或稍后重试。',
+    title: '云端处理失败',
+    action: '确认后端服务已启动，缩短素材后重试。',
   },
   'expired-link': {
     reason: 'expired-link',
