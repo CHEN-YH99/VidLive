@@ -18,6 +18,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
   await server.register(cors, {
     origin: config.corsOrigin,
+    credentials: true,
   });
 
   await server.register(multipart, {
@@ -31,7 +32,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   registerPhaseZeroRoutes(server, config);
   registerConversionRoutes(server, config);
   registerCompatibilityRoutes(server, config);
-  registerV1Routes(server, config);
+  await registerV1Routes(server, config);
 
   server.setErrorHandler((error, _request, reply) => {
     server.log.error(error);

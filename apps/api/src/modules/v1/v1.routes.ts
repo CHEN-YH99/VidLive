@@ -1,6 +1,8 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../../config/env.js';
 import { V1Error, V1Service } from './v1.service.js';
+
+const authCookieName = 'vidlive_session';
 
 interface AuthBody {
   email?: string;
@@ -49,16 +51,20 @@ interface ToolParams {
   toolId: string;
 }
 
-export function registerV1Routes(server: FastifyInstance, config: AppConfig): void {
-  const service = new V1Service(config.jwtSecret);
+export async function registerV1Routes(server: FastifyInstance, config: AppConfig): Promise<void> {
+  const service = await V1Service.create(config.jwtSecret, config.databaseUrl);
 
   server.post<{ Body: AuthBody }>('/api/v1/auth/register', async (request, reply) => {
     try {
-      return await service.register({
+      const session = await service.register({
         email: request.body.email ?? '',
         password: request.body.password ?? '',
         username: request.body.username ?? '',
       });
+
+      setAuthCookie(reply, session.token, config.authCookieSecure);
+
+      return session;
     } catch (error) {
       return sendV1Error(reply, error);
     }
@@ -66,17 +72,29 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
 
   server.post<{ Body: AuthBody }>('/api/v1/auth/login', async (request, reply) => {
     try {
-      return await service.login({
+      const session = await service.login({
         email: request.body.email ?? '',
         password: request.body.password ?? '',
       });
+
+      setAuthCookie(reply, session.token, config.authCookieSecure);
+
+      return session;
     } catch (error) {
       return sendV1Error(reply, error);
     }
   });
 
+  server.post('/api/v1/auth/logout', async (_request, reply) => {
+    clearAuthCookie(reply, config.authCookieSecure);
+
+    return {
+      ok: true,
+    };
+  });
+
   server.get('/api/v1/me', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -92,7 +110,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.get('/api/v1/usage', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -105,7 +123,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.post('/api/v1/usage/conversions', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -132,7 +150,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.post<{ Body: FeedbackBody }>('/api/v1/compatibility-feedback', async (request) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
     const feedback = {
       userId: user?.id ?? null,
       presetId: request.body.presetId ?? 'unknown',
@@ -176,7 +194,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.post('/api/v1/billing/checkout-intents', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -197,7 +215,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.post('/api/v1/billing/subscription/cancel', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -212,7 +230,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.post<{ Body: BatchBody }>('/api/v1/batches', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -246,7 +264,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.get('/api/v1/history', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -273,7 +291,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.post<{ Params: ToolParams }>('/api/v1/tools/:toolId/intents', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -296,7 +314,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.get('/api/v1/api-keys', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -311,7 +329,7 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 
   server.post<{ Body: ApiKeyBody }>('/api/v1/api-keys', async (request, reply) => {
-    const user = authenticateRequest(service, request);
+    const user = await authenticateRequest(service, request);
 
     if (!user) {
       return reply.status(401).send({
@@ -336,20 +354,65 @@ export function registerV1Routes(server: FastifyInstance, config: AppConfig): vo
   });
 }
 
-function authenticateRequest(service: V1Service, request: FastifyRequest) {
+async function authenticateRequest(service: V1Service, request: FastifyRequest) {
   const authorization = request.headers.authorization;
-  const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : null;
+  const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : readCookie(request, authCookieName);
 
   return service.authenticate(token);
 }
 
 function sendV1Error(reply: { status: (statusCode: number) => { send: (payload: unknown) => unknown } }, error: unknown) {
   if (error instanceof V1Error) {
-    return reply.status(error.code === 'quota-exceeded' ? 429 : 400).send({
+    const statusCode = error.code === 'quota-exceeded' ? 429 : error.code === 'account-locked' ? 423 : 400;
+
+    return reply.status(statusCode).send({
       code: error.code,
       message: error.message,
     });
   }
 
   throw error;
+}
+
+function setAuthCookie(reply: FastifyReply, token: string, secure: boolean): void {
+  reply.header('Set-Cookie', serializeAuthCookie(`${authCookieName}=${encodeURIComponent(token)}`, secure, 7 * 24 * 60 * 60));
+}
+
+function clearAuthCookie(reply: FastifyReply, secure: boolean): void {
+  reply.header('Set-Cookie', serializeAuthCookie(`${authCookieName}=`, secure, 0));
+}
+
+function serializeAuthCookie(prefix: string, secure: boolean, maxAgeSeconds: number): string {
+  return [
+    prefix,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAgeSeconds}`,
+    secure ? 'Secure' : '',
+  ]
+    .filter(Boolean)
+    .join('; ');
+}
+
+function readCookie(request: FastifyRequest, name: string): string | null {
+  const cookieHeader = request.headers.cookie;
+
+  if (!cookieHeader) {
+    return null;
+  }
+
+  for (const part of cookieHeader.split(';')) {
+    const [rawName, ...rawValue] = part.trim().split('=');
+
+    if (rawName === name) {
+      try {
+        return decodeURIComponent(rawValue.join('='));
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  return null;
 }

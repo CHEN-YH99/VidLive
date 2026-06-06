@@ -32,13 +32,13 @@ async function main() {
     const register = await postJson('/api/v1/auth/register', {
       email,
       username: 'phase3-smoke',
-      password: 'phase3-smoke-password',
+      password: 'VidLive-Smoke-2026!',
     });
     assert(register.token, 'register did not return token');
 
     const login = await postJson('/api/v1/auth/login', {
       email,
-      password: 'phase3-smoke-password',
+      password: 'VidLive-Smoke-2026!',
     });
     assert(login.token, 'login did not return token');
 

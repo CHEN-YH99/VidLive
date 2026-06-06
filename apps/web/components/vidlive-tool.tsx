@@ -6,26 +6,29 @@ import {
   CheckCircle2,
   Clock3,
   CloudOff,
+  Crown,
   Download,
   FileArchive,
   Film,
   ImageIcon,
   Info,
+  LogIn,
+  LogOut,
   Loader2,
   Lock,
   MonitorDown,
   Palette,
-  PlayCircle,
   Scissors,
   ShieldCheck,
   SlidersHorizontal,
   Smartphone,
   Upload,
+  UserRound,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { type FileRejection, useDropzone } from 'react-dropzone';
 import QRCode from 'qrcode';
 import {
@@ -119,6 +122,7 @@ const presetHelpText: Record<ExportPresetId, string> = {
 
 type CloudJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
 type GenerationStatus = 'generating' | 'complete' | 'failed';
+type AuthMode = 'login' | 'register';
 
 interface CloudJob {
   id: string;
@@ -189,6 +193,36 @@ interface CloudDownloadRequest {
   url: string;
   fileName: string;
   source: 'android-motion-photo' | 'cloud-package';
+}
+
+interface AuthUser {
+  id: string;
+  email: string;
+  username: string;
+  planType: 'free' | 'pro';
+  dailyQuota: number;
+  createdAt: string;
+}
+
+interface AuthSession {
+  user: AuthUser;
+  token?: string;
+}
+
+interface AuthUsageSummary {
+  quotaLimit: number;
+  usedToday: number;
+  remainingToday: number;
+}
+
+type GenerationResource = 'free-local' | 'pro-local' | 'pro-cloud';
+type GenerationAccessKind = 'auth-required' | 'ready' | 'pro-required' | 'quota-exhausted' | 'error';
+
+interface GenerationAccessState {
+  kind: GenerationAccessKind;
+  usage: AuthUsageSummary | null;
+  resource: GenerationResource | null;
+  message?: string;
 }
 
 const compatibilityViewerOptions: Array<{ id: CompatibilityViewerId; label: string }> = [
@@ -359,6 +393,34 @@ function toApiUrl(value: string): string {
   return `${normalizedBase}${normalizedValue}`;
 }
 
+function createAuthHeaders(session: AuthSession): Record<string, string> {
+  return session.token ? { Authorization: `Bearer ${session.token}` } : {};
+}
+
+async function fetchCurrentAuthSession(): Promise<AuthSession | null> {
+  const response = await fetch(toApiUrl('/api/v1/me'), {
+    cache: 'no-store',
+    credentials: 'include',
+  });
+  const payload = (await response.json().catch(() => null)) as { user?: AuthUser } | null;
+
+  if (!response.ok || !payload?.user) {
+    return null;
+  }
+
+  return {
+    user: payload.user,
+  };
+}
+
+function resolveGenerationResource(user: AuthUser, mode: ConversionDraft['mode']): GenerationResource {
+  if (user.planType === 'pro') {
+    return mode === 'cloud' ? 'pro-cloud' : 'pro-local';
+  }
+
+  return 'free-local';
+}
+
 function createCloudQuery(draft: ConversionDraft): string {
   const query = new URLSearchParams({
     presetId: draft.presetId,
@@ -434,6 +496,13 @@ export function VidLiveTool() {
   const [compatibilityDialogOpen, setCompatibilityDialogOpen] = useState(false);
   const [lastSuccessfulDownload, setLastSuccessfulDownload] = useState<CompatibilityDownloadContext | null>(null);
   const [downloadBusySource, setDownloadBusySource] = useState<CloudDownloadRequest['source'] | null>(null);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [generationAccessDialogOpen, setGenerationAccessDialogOpen] = useState(false);
+  const [generationAccess, setGenerationAccess] = useState<GenerationAccessState | null>(null);
+  const [isCheckingGenerationAccess, setIsCheckingGenerationAccess] = useState(false);
+  const [isConsumingGenerationQuota, setIsConsumingGenerationQuota] = useState(false);
 
   const clearGenerationFeedback = useCallback((closeDialog = true) => {
     setExportResult(null);
@@ -453,6 +522,44 @@ export function VidLiveTool() {
       downloadedAt: new Date().toISOString(),
     });
     setCompatibilityDialogOpen(true);
+  }, []);
+
+  const handleAuthSuccess = useCallback((session: AuthSession) => {
+    setAuthSession(session);
+    setAuthDialogOpen(false);
+    setGenerationAccess(null);
+    setGenerationAccessDialogOpen(false);
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    void fetch(toApiUrl('/api/v1/auth/logout'), {
+      method: 'POST',
+      credentials: 'include',
+    });
+    setAuthSession(null);
+    setLogoutConfirmOpen(false);
+    setGenerationAccess(null);
+    setGenerationAccessDialogOpen(false);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetchCurrentAuthSession()
+      .then((session) => {
+        if (!cancelled) {
+          setAuthSession(session);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAuthSession(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const refreshCloudJob = useCallback(async (jobId: string): Promise<CloudJob | null> => {
@@ -668,7 +775,15 @@ export function VidLiveTool() {
   const cloudBusy = isCloudJobActive(cloudJob);
   const cloudConsentRequired = draft.mode === 'cloud' && !cloudConsentConfirmed;
   const canGenerate = Boolean(
-    file && previewUrl && metadata && !isReading && !isGenerating && !cloudBusy && !cloudConsentRequired,
+    file &&
+      previewUrl &&
+      metadata &&
+      !isReading &&
+      !isGenerating &&
+      !cloudBusy &&
+      !cloudConsentRequired &&
+      !isCheckingGenerationAccess &&
+      !isConsumingGenerationQuota,
   );
   const packageArtifact = exportResult?.artifacts.find((artifact) => artifact.kind === 'package') ?? null;
   const hasGenerationOutput = Boolean(exportResult || cloudJob);
@@ -761,7 +876,7 @@ export function VidLiveTool() {
     }
   };
 
-  const handleGenerate = async () => {
+  const runGeneration = async () => {
     if (!file || !previewUrl || !metadata) {
       clearGenerationFeedback();
       setFailureReason('metadata-read-failed');
@@ -820,13 +935,190 @@ export function VidLiveTool() {
     }
   };
 
+  const handleGenerateClick = async () => {
+    if (!file || !previewUrl || !metadata) {
+      clearGenerationFeedback();
+      setFailureReason('metadata-read-failed');
+      return;
+    }
+
+    if (draft.mode === 'cloud' && !cloudConsentConfirmed) {
+      clearGenerationFeedback();
+      setFailureReason('cloud-required');
+      return;
+    }
+
+    if (!authSession) {
+      setGenerationAccess({
+        kind: 'auth-required',
+        usage: null,
+        resource: null,
+        message: '登录后才能生成文件，系统会按账号套餐分配可用资源。',
+      });
+      setGenerationAccessDialogOpen(true);
+      return;
+    }
+
+    setIsCheckingGenerationAccess(true);
+    setGenerationAccess(null);
+
+    try {
+      const response = await fetch(toApiUrl('/api/v1/me'), {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: createAuthHeaders(authSession),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { user?: AuthUser; usage?: AuthUsageSummary; message?: string }
+        | null;
+
+      if (response.status === 401) {
+        setAuthSession(null);
+        setGenerationAccess({
+          kind: 'auth-required',
+          usage: null,
+          resource: null,
+          message: '登录状态已失效，请重新登录后再生成。',
+        });
+        setGenerationAccessDialogOpen(true);
+        return;
+      }
+
+      if (!response.ok || !payload?.user || !payload.usage) {
+        setGenerationAccess({
+          kind: 'error',
+          usage: null,
+          resource: null,
+          message: payload?.message ?? '账号资源校验失败，请稍后再试。',
+        });
+        setGenerationAccessDialogOpen(true);
+        return;
+      }
+
+      const nextSession = {
+        ...authSession,
+        user: payload.user,
+      };
+      const resource = resolveGenerationResource(payload.user, draft.mode);
+
+      setAuthSession(nextSession);
+
+      if (draft.mode === 'cloud' && payload.user.planType !== 'pro') {
+        setGenerationAccess({
+          kind: 'pro-required',
+          usage: payload.usage,
+          resource: null,
+          message: '云端安卓实况图属于 VIP 资源，免费账号可改用本地生成。',
+        });
+        setGenerationAccessDialogOpen(true);
+        return;
+      }
+
+      if (payload.usage.remainingToday <= 0) {
+        setGenerationAccess({
+          kind: 'quota-exhausted',
+          usage: payload.usage,
+          resource,
+          message: '今日生成次数已用完，请明天再试或升级 VIP。',
+        });
+        setGenerationAccessDialogOpen(true);
+        return;
+      }
+
+      setGenerationAccess({
+        kind: 'ready',
+        usage: payload.usage,
+        resource,
+      });
+      setGenerationAccessDialogOpen(true);
+    } catch {
+      setGenerationAccess({
+        kind: 'error',
+        usage: null,
+        resource: null,
+        message: '账号服务暂时不可用，请确认后端服务已启动。',
+      });
+      setGenerationAccessDialogOpen(true);
+    } finally {
+      setIsCheckingGenerationAccess(false);
+    }
+  };
+
+  const confirmGenerateWithQuota = async () => {
+    if (!authSession || generationAccess?.kind !== 'ready') {
+      return;
+    }
+
+    setIsConsumingGenerationQuota(true);
+
+    try {
+      const response = await fetch(toApiUrl('/api/v1/usage/conversions'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          ...createAuthHeaders(authSession),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          presetId: draft.presetId,
+          mode: draft.mode,
+          resource: generationAccess.resource,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as AuthUsageSummary | { message?: string } | null;
+
+      if (response.status === 401) {
+        setAuthSession(null);
+        setGenerationAccess({
+          kind: 'auth-required',
+          usage: null,
+          resource: null,
+          message: '登录状态已失效，请重新登录后再生成。',
+        });
+        return;
+      }
+
+      if (response.status === 429) {
+        setGenerationAccess({
+          kind: 'quota-exhausted',
+          usage: generationAccess.usage,
+          resource: generationAccess.resource,
+          message: '今日生成次数刚刚用完，请明天再试或升级 VIP。',
+        });
+        return;
+      }
+
+      if (!response.ok) {
+        setGenerationAccess({
+          kind: 'error',
+          usage: generationAccess.usage,
+          resource: generationAccess.resource,
+          message: payload && 'message' in payload ? payload.message : '生成额度扣减失败，请稍后再试。',
+        });
+        return;
+      }
+
+      if (payload && 'remainingToday' in payload) {
+        setGenerationAccess({
+          ...generationAccess,
+          usage: payload,
+        });
+      }
+
+      setGenerationAccessDialogOpen(false);
+      await runGeneration();
+    } finally {
+      setIsConsumingGenerationQuota(false);
+    }
+  };
+
   return (
     <main className="min-h-screen bg-[#fff4df] text-ink">
       <section className="border-b-2 border-ink/10 bg-[#fff4df]">
         <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-4 py-4 sm:px-6 lg:px-8">
           <header className="grid gap-3 lg:grid-cols-[auto_minmax(280px,1fr)_auto] lg:items-center">
             <div className="inline-flex h-11 items-center gap-2 rounded-lg border-2 border-ink bg-white px-3 font-black shadow-clay-sm">
-              <PlayCircle size={18} className="text-[#ff715b]" />
+              <img src="/images/01.webp" alt="" className="h-6 w-6 rounded-md object-cover" />
               VidLive
             </div>
 
@@ -835,7 +1127,11 @@ export function VidLiveTool() {
             <div className="flex flex-wrap gap-2 lg:justify-end">
               <StatusPill icon={<ShieldCheck size={15} />} label="本地优先" />
               <StatusPill icon={<Clock3 size={15} />} label="1-3 秒实况" />
-              <StatusPill icon={<ImageIcon size={15} />} label="安卓单文件" />
+              <AuthEntryButton
+                session={authSession}
+                onOpen={() => setAuthDialogOpen(true)}
+                onLogout={() => setLogoutConfirmOpen(true)}
+              />
             </div>
           </header>
 
@@ -1162,7 +1458,7 @@ export function VidLiveTool() {
               <button
                 type="button"
                 disabled={!canGenerate}
-                onClick={handleGenerate}
+                onClick={handleGenerateClick}
                 className="sticky bottom-3 z-20 inline-flex h-12 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40 lg:static"
               >
                 {isGenerating ? <Loader2 size={17} className="animate-spin" /> : <Download size={17} />}
@@ -1217,10 +1513,40 @@ export function VidLiveTool() {
               clearGenerationFeedback();
             }}
           />
+          <GenerationAccessDialog
+            open={generationAccessDialogOpen}
+            access={generationAccess}
+            session={authSession}
+            mode={draft.mode}
+            isChecking={isCheckingGenerationAccess}
+            isConsuming={isConsumingGenerationQuota}
+            onOpenChange={setGenerationAccessDialogOpen}
+            onOpenAuth={() => setAuthDialogOpen(true)}
+            onUseLocal={() => {
+              clearGenerationFeedback();
+              setCloudConsentConfirmed(false);
+              setDraft((current) => ({ ...current, mode: 'local' }));
+              setGenerationAccessDialogOpen(false);
+            }}
+            onConfirm={() => {
+              void confirmGenerateWithQuota();
+            }}
+          />
           <CompatibilityLabDialog
             open={compatibilityDialogOpen}
             downloadContext={lastSuccessfulDownload}
             onOpenChange={setCompatibilityDialogOpen}
+          />
+          <AuthDialog
+            open={authDialogOpen}
+            onOpenChange={setAuthDialogOpen}
+            onAuthSuccess={handleAuthSuccess}
+          />
+          <LogoutConfirmDialog
+            open={logoutConfirmOpen && Boolean(authSession)}
+            user={authSession?.user ?? null}
+            onOpenChange={setLogoutConfirmOpen}
+            onConfirm={handleLogout}
           />
         </div>
       </section>
@@ -1726,6 +2052,698 @@ function ExportResultPanel({
       </div>
     </Panel>
   );
+}
+
+function GenerationAccessDialog({
+  open,
+  access,
+  session,
+  mode,
+  isChecking,
+  isConsuming,
+  onOpenChange,
+  onOpenAuth,
+  onUseLocal,
+  onConfirm,
+}: {
+  open: boolean;
+  access: GenerationAccessState | null;
+  session: AuthSession | null;
+  mode: ConversionDraft['mode'];
+  isChecking: boolean;
+  isConsuming: boolean;
+  onOpenChange: (open: boolean) => void;
+  onOpenAuth: () => void;
+  onUseLocal: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isConsuming) {
+        onOpenChange(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isConsuming, onOpenChange, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  const usage = access?.usage ?? null;
+  const isReady = access?.kind === 'ready';
+  const isAuthRequired = access?.kind === 'auth-required';
+  const isProRequired = access?.kind === 'pro-required';
+  const isBlocked = access?.kind === 'quota-exhausted' || access?.kind === 'error';
+  const resourceCopy = getGenerationResourceCopy(access?.resource ?? null, mode);
+  const planLabel = session?.user.planType === 'pro' ? 'VIP / Pro' : session ? 'Free' : '未登录';
+  const title =
+    access?.kind === 'ready'
+      ? '生成资源确认'
+      : access?.kind === 'pro-required'
+        ? '需要 VIP 资源'
+        : access?.kind === 'quota-exhausted'
+          ? '今日额度已用完'
+          : access?.kind === 'error'
+            ? '资源校验失败'
+            : '登录后生成';
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-3 sm:items-center sm:p-5">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="generation-access-title"
+        className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-lg flex-col overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay sm:max-h-[calc(100vh-2.5rem)]"
+      >
+        <div className="flex items-start justify-between gap-3 border-b-2 border-ink bg-white p-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-[#f7c948] text-ink shadow-clay-sm">
+              {isChecking ? <Loader2 size={18} className="animate-spin" /> : <Crown size={18} />}
+            </span>
+            <div className="min-w-0">
+              <p id="generation-access-title" className="text-sm font-black text-ink">
+                {isChecking ? '正在校验资源' : title}
+              </p>
+              <p className="mt-1 truncate text-xs font-bold text-ink/55">{session?.user.email ?? '登录后分配资源额度'}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label="关闭生成资源确认"
+            disabled={isConsuming}
+            onClick={() => onOpenChange(false)}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/10 disabled:text-ink/35"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <div className="min-h-0 overflow-y-auto p-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <GenerationResourceCard label="当前套餐" value={planLabel} detail={session ? '账号已识别' : '未登录不可生成'} />
+            <GenerationResourceCard
+              label="今日额度"
+              value={usage ? `${usage.remainingToday}/${usage.quotaLimit}` : '-'}
+              detail={usage ? `已用 ${usage.usedToday} 次` : '登录后同步额度'}
+            />
+          </div>
+
+          <div className="mt-3 rounded-lg border-2 border-ink bg-white p-3">
+            <div className="flex items-start gap-3">
+              <span
+                className={[
+                  'mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-2 border-ink shadow-clay-sm',
+                  resourceCopy.tone,
+                ].join(' ')}
+              >
+                {resourceCopy.icon}
+              </span>
+              <div>
+                <p className="text-sm font-black text-ink">{resourceCopy.title}</p>
+                <p className="mt-1 text-xs font-bold leading-5 text-ink/65">{access?.message ?? resourceCopy.description}</p>
+              </div>
+            </div>
+          </div>
+
+          {isReady && usage && (
+            <p className="mt-3 rounded-lg border border-ink/10 bg-[#d9f99d] px-3 py-2 text-xs font-bold leading-5 text-ink/70">
+              点击确认后会消耗 1 次今日额度，生成完成后可在弹窗里下载结果。
+            </p>
+          )}
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              disabled={isConsuming}
+              onClick={() => onOpenChange(false)}
+              className="inline-flex h-11 items-center justify-center rounded-lg border-2 border-ink bg-white px-4 text-sm font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/10 disabled:text-ink/35"
+            >
+              取消
+            </button>
+
+            {isAuthRequired ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenChange(false);
+                  onOpenAuth();
+                }}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5"
+              >
+                <LogIn size={16} />
+                登录 / 注册
+              </button>
+            ) : isProRequired ? (
+              <button
+                type="button"
+                onClick={onUseLocal}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#e4f7ff] px-4 text-sm font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+              >
+                <CloudOff size={16} />
+                改用本地生成
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={!isReady || isBlocked || isChecking || isConsuming}
+                onClick={onConfirm}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+              >
+                {isConsuming ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                确认生成
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GenerationResourceCard({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="rounded-lg border-2 border-ink bg-white p-3 shadow-clay-sm">
+      <p className="text-xs font-black uppercase text-ink/45">{label}</p>
+      <p className="mt-2 text-lg font-black text-ink">{value}</p>
+      <p className="mt-1 text-xs font-bold text-ink/55">{detail}</p>
+    </div>
+  );
+}
+
+function getGenerationResourceCopy(resource: GenerationResource | null, mode: ConversionDraft['mode']) {
+  if (resource === 'pro-cloud') {
+    return {
+      title: 'VIP 云端资源',
+      description: '可生成 Android Motion Photo 单文件、预览图和完整素材包，适合最终真机验证。',
+      tone: 'bg-[#f7c948]',
+      icon: <Crown size={16} />,
+    };
+  }
+
+  if (resource === 'pro-local') {
+    return {
+      title: 'VIP 本地资源',
+      description: '使用 VIP 日额度进行本地生成，素材仍不离开浏览器。',
+      tone: 'bg-[#d9f99d]',
+      icon: <Crown size={16} />,
+    };
+  }
+
+  if (resource === 'free-local') {
+    return {
+      title: 'Free 本地资源',
+      description: '每日 5 次本地生成，支持标准预设和完整 ZIP 下载。',
+      tone: 'bg-[#d9f99d]',
+      icon: <ShieldCheck size={16} />,
+    };
+  }
+
+  if (mode === 'cloud') {
+    return {
+      title: '云端资源未开放',
+      description: '云端安卓实况图需要 VIP；免费账号可以切回本地生成。',
+      tone: 'bg-[#ffe2dc]',
+      icon: <Crown size={16} />,
+    };
+  }
+
+  return {
+    title: '等待账号资源',
+    description: '登录后会根据 Free 或 VIP 套餐分配可用生成资源。',
+    tone: 'bg-[#e4f7ff]',
+    icon: <LogIn size={16} />,
+  };
+}
+
+function AuthEntryButton({
+  session,
+  onOpen,
+  onLogout,
+}: {
+  session: AuthSession | null;
+  onOpen: () => void;
+  onLogout: () => void;
+}) {
+  if (session) {
+    const initials = getUserInitials(session.user.username);
+
+    return (
+      <div className="inline-flex h-9 overflow-hidden rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm">
+        <button
+          type="button"
+          title={session.user.email}
+          onClick={onOpen}
+          className="inline-flex min-w-0 items-center gap-2 px-2 text-xs font-black transition hover:bg-[#e4f7ff] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#23b7a4]"
+        >
+          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-ink/15 bg-[#d9f99d] text-[10px]">
+            {initials}
+          </span>
+          <span className="hidden max-w-20 truncate sm:inline">{session.user.username}</span>
+          <span className="rounded-md bg-[#e4f7ff] px-1.5 py-0.5 text-[10px] uppercase text-ink/70">
+            {session.user.planType}
+          </span>
+        </button>
+        <button
+          type="button"
+          aria-label="退出登录"
+          onClick={onLogout}
+          className="inline-flex w-8 items-center justify-center border-l-2 border-ink text-ink/70 transition hover:bg-[#ffe2dc] hover:text-ink"
+        >
+          <LogOut size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-ink px-2.5 text-xs font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#23b7a4]"
+    >
+      <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#d9f99d] text-ink">
+        <UserRound size={14} />
+      </span>
+      <span>登录</span>
+      <span className="rounded-md border border-white/15 bg-white/10 px-1.5 py-0.5 text-[10px] text-white/75">
+        注册
+      </span>
+    </button>
+  );
+}
+
+function LogoutConfirmDialog({
+  open,
+  user,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean;
+  user: AuthUser | null;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onOpenChange(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onOpenChange, open]);
+
+  if (!open || !user) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/45 p-3 sm:items-center sm:p-5">
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="logout-confirm-title"
+        aria-describedby="logout-confirm-description"
+        className="w-full max-w-sm overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay"
+      >
+        <div className="flex items-start justify-between gap-3 border-b-2 border-ink bg-white p-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-[#ffe2dc] text-[#ff715b] shadow-clay-sm">
+              <LogOut size={18} />
+            </span>
+            <div className="min-w-0">
+              <p id="logout-confirm-title" className="text-sm font-black text-ink">
+                确认退出登录？
+              </p>
+              <p className="mt-1 truncate text-xs font-bold text-ink/55">{user.email}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label="关闭退出确认"
+            onClick={() => onOpenChange(false)}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <div className="p-4">
+          <p id="logout-confirm-description" className="text-xs font-bold leading-5 text-ink/65">
+            退出后会清除本机保存的账号状态，当前素材和页面设置不会被删除。
+          </p>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="inline-flex h-11 items-center justify-center rounded-lg border-2 border-ink bg-white px-4 text-sm font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#ff715b] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#23b7a4]"
+            >
+              <LogOut size={16} />
+              退出登录
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface AuthFieldErrors {
+  email?: string;
+  username?: string;
+  password?: string;
+}
+
+interface PasswordRuleState {
+  label: string;
+  passed: boolean;
+}
+
+function validateAuthForm(mode: AuthMode, email: string, username: string, password: string): AuthFieldErrors {
+  const errors: AuthFieldErrors = {};
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedUsername = username.trim();
+
+  if (!isValidAuthEmail(normalizedEmail)) {
+    errors.email = '请输入有效邮箱。';
+  }
+
+  if (mode === 'register' && !/^[\p{L}\p{N}_-]{2,32}$/u.test(normalizedUsername)) {
+    errors.username = '用户名需为 2-32 位，可用中英文、数字、下划线或短横线。';
+  }
+
+  if (mode === 'login') {
+    if (!password) {
+      errors.password = '请输入密码。';
+    }
+  } else {
+    const failedRule = getPasswordRules(password, normalizedEmail, normalizedUsername).find((rule) => !rule.passed);
+
+    if (failedRule) {
+      errors.password = failedRule.label;
+    }
+  }
+
+  return errors;
+}
+
+function getPasswordRules(password: string, email: string, username: string): PasswordRuleState[] {
+  const categoryCount = [
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /\d/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ].filter(Boolean).length;
+  const emailName = email.split('@')[0] ?? '';
+  const normalizedPassword = password.toLowerCase();
+
+  return [
+    { label: '10-128 位', passed: password.length >= 10 && password.length <= 128 },
+    { label: '至少包含 3 类字符', passed: categoryCount >= 3 },
+    {
+      label: '不包含邮箱或用户名',
+      passed:
+        (!emailName || emailName.length < 3 || !normalizedPassword.includes(emailName)) &&
+        (!username || username.length < 3 || !normalizedPassword.includes(username.toLowerCase())),
+    },
+  ];
+}
+
+function isValidAuthEmail(value: string): boolean {
+  return value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/u.test(value);
+}
+
+function AuthDialog({
+  open,
+  onOpenChange,
+  onAuthSuccess,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onAuthSuccess: (session: AuthSession) => void;
+}) {
+  const [mode, setMode] = useState<AuthMode>('login');
+  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [status, setStatus] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const fieldErrors = useMemo(() => validateAuthForm(mode, email, username, password), [email, mode, password, username]);
+  const passwordRules = useMemo(() => getPasswordRules(password, email.trim().toLowerCase(), username.trim()), [email, password, username]);
+  const canSubmit = Object.keys(fieldErrors).length === 0;
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onOpenChange(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onOpenChange, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextErrors = validateAuthForm(mode, email, username, password);
+
+    if (Object.keys(nextErrors).length > 0) {
+      setStatus(Object.values(nextErrors)[0] ?? '请检查表单。');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setStatus(null);
+
+    try {
+      const response = await fetch(toApiUrl(mode === 'register' ? '/api/v1/auth/register' : '/api/v1/auth/login'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+          username: mode === 'register' ? username.trim() : undefined,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { user?: AuthUser; token?: string; message?: string }
+        | null;
+
+      if (!response.ok || !payload?.user || !payload.token) {
+        setStatus(payload?.message ?? '账号请求失败');
+        return;
+      }
+
+      onAuthSuccess({
+        user: payload.user,
+        token: payload.token,
+      });
+      setPassword('');
+    } catch {
+      setStatus('账号服务不可用');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-3 sm:items-center sm:p-5">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-dialog-title"
+        className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-md flex-col overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay sm:max-h-[calc(100vh-2.5rem)]"
+      >
+        <div className="flex items-start justify-between gap-3 border-b-2 border-ink bg-white p-4">
+          <div>
+            <p id="auth-dialog-title" className="flex items-center gap-2 text-sm font-black text-ink">
+              <LogIn size={18} className="text-[#23b7a4]" />
+              账号入口
+            </p>
+            <p className="mt-1 text-xs font-bold leading-5 text-ink/60">保存配额、历史和后续批量能力。</p>
+          </div>
+          <button
+            type="button"
+            aria-label="关闭账号入口"
+            onClick={() => onOpenChange(false)}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <div className="min-h-0 overflow-y-auto p-4">
+          <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg border-2 border-ink bg-white p-1">
+            {(['login', 'register'] as AuthMode[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => {
+                  setMode(item);
+                  setStatus(null);
+                }}
+                className={[
+                  'h-9 rounded-md text-xs font-black transition',
+                  mode === item ? 'bg-ink text-white' : 'bg-transparent text-ink/60 hover:bg-[#e4f7ff] hover:text-ink',
+                ].join(' ')}
+              >
+                {item === 'login' ? '登录' : '注册'}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={submitAuth} className="grid gap-3">
+            {mode === 'register' && (
+              <AuthTextField
+                label="用户名"
+                value={username}
+                type="text"
+                autoComplete="username"
+                placeholder="VidLive 用户"
+                error={fieldErrors.username}
+                maxLength={32}
+                onChange={setUsername}
+              />
+            )}
+            <AuthTextField
+              label="邮箱"
+              value={email}
+              type="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              error={fieldErrors.email}
+              maxLength={254}
+              onChange={setEmail}
+            />
+            <AuthTextField
+              label="密码"
+              value={password}
+              type="password"
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+              placeholder={mode === 'register' ? '10 位以上，含多类字符' : '输入密码'}
+              error={fieldErrors.password}
+              maxLength={128}
+              onChange={setPassword}
+            />
+
+            {mode === 'register' && (
+              <div className="grid gap-1 rounded-lg border-2 border-ink/10 bg-white/70 p-3">
+                {passwordRules.map((rule) => (
+                  <p
+                    key={rule.label}
+                    className={['flex items-center gap-2 text-[11px] font-black', rule.passed ? 'text-[#167f72]' : 'text-ink/45'].join(' ')}
+                  >
+                    <CheckCircle2 size={13} />
+                    {rule.label}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isSubmitting || !canSubmit}
+              className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+            >
+              {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <UserRound size={16} />}
+              {mode === 'login' ? '进入账号' : '创建账号'}
+            </button>
+
+            {status && <p className="text-xs font-bold leading-5 text-ink/60">{status}</p>}
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuthTextField({
+  label,
+  value,
+  type,
+  autoComplete,
+  placeholder,
+  error,
+  maxLength,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  type: 'email' | 'password' | 'text';
+  autoComplete: string;
+  placeholder: string;
+  error?: string | undefined;
+  maxLength?: number;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid gap-1 text-xs font-black text-ink/60">
+      {label}
+      <input
+        type={type}
+        value={value}
+        autoComplete={autoComplete}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        aria-invalid={Boolean(error)}
+        onChange={(event) => onChange(event.target.value)}
+        className={[
+          'h-11 rounded-lg border-2 bg-white px-3 text-sm font-black text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2',
+          error ? 'border-[#ff715b] focus:border-[#ff715b] focus:ring-[#ff715b]/30' : 'border-ink/15 focus:border-ink focus:ring-[#23b7a4]',
+        ].join(' ')}
+      />
+      {error && <span className="text-[11px] leading-4 text-[#b63f2f]">{error}</span>}
+    </label>
+  );
+}
+
+function getUserInitials(username: string): string {
+  const trimmed = username.trim();
+
+  if (!trimmed) {
+    return 'U';
+  }
+
+  return trimmed.slice(0, 2).toUpperCase();
 }
 
 function GenerationStatusButton({

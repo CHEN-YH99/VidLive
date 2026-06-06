@@ -32,7 +32,7 @@ async function main() {
     const register = await postJson('/api/v1/auth/register', {
       email,
       username: 'phase4-smoke',
-      password: 'phase4-smoke-password',
+      password: 'VidLive-Smoke-2026!',
     });
     const token = register.token;
 

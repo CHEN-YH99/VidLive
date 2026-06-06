@@ -32,7 +32,7 @@ async function main() {
     const register = await postJson('/api/v1/auth/register', {
       email,
       username: 'phase5-smoke',
-      password: 'phase5-smoke-password',
+      password: 'VidLive-Smoke-2026!',
     });
     const token = register.token;
     const intent = await postJson('/api/v1/billing/checkout-intents', {}, token);

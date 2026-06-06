@@ -11,6 +11,7 @@ export interface AppConfig {
   cloudFileSizeBytes: number;
   cloudRetentionHours: number;
   cloudQueueConcurrency: number;
+  databaseUrl: string | null;
   redisUrl: string | null;
   r2Endpoint: string | null;
   r2AccessKeyId: string | null;
@@ -18,6 +19,8 @@ export interface AppConfig {
   r2Bucket: string | null;
   r2SignedUrlTtlSeconds: number;
   jwtSecret: string;
+  authCookieSecure: boolean;
+  v1StorePath: string;
 }
 
 function readNumber(name: string, fallback: number): number {
@@ -53,6 +56,7 @@ export function loadConfig(): AppConfig {
     cloudFileSizeBytes: readNumber('MAX_CLOUD_FILE_SIZE', productLimits.cloudFileSizeBytes),
     cloudRetentionHours: readNumber('CLOUD_RETENTION_HOURS', 24),
     cloudQueueConcurrency: readNumber('CLOUD_QUEUE_CONCURRENCY', 1),
+    databaseUrl: readOptionalString('DATABASE_URL'),
     redisUrl: readOptionalString('REDIS_URL'),
     r2Endpoint: readOptionalString('R2_ENDPOINT'),
     r2AccessKeyId: readOptionalString('R2_ACCESS_KEY_ID'),
@@ -60,5 +64,7 @@ export function loadConfig(): AppConfig {
     r2Bucket: readOptionalString('R2_BUCKET'),
     r2SignedUrlTtlSeconds: readNumber('R2_SIGNED_URL_TTL_SECONDS', 60 * 60),
     jwtSecret: process.env.JWT_SECRET ?? 'dev-vidlive-secret-change-me',
+    authCookieSecure: process.env.AUTH_COOKIE_SECURE === 'true',
+    v1StorePath: process.env.V1_STORE_PATH ?? './data/v1-store.json',
   };
 }

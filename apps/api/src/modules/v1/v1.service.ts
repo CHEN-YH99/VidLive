@@ -1,7 +1,12 @@
-import { createHmac, randomBytes, randomUUID, scrypt } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { V1AuthStore, type StoredUserRecord } from './v1.auth-store.js';
 
 const scryptAsync = promisify(scrypt);
+const tokenTtlMilliseconds = 7 * 24 * 60 * 60 * 1000;
+const maxFailedLoginAttempts = 5;
+const accountLockMilliseconds = 15 * 60 * 1000;
+const commonWeakPasswords = new Set(['password', 'password123', '12345678', '123456789', 'qwerty123', 'vidlive123']);
 
 export interface V1UserProfile {
   id: string;
@@ -33,7 +38,9 @@ export interface KeyframeRecommendation {
 
 interface StoredUser extends V1UserProfile {
   passwordHash: string;
-  passwordSalt: string;
+  failedLoginCount: number;
+  lockedUntil: string | null;
+  lastLoginAt: string | null;
 }
 
 interface UsageLog {
@@ -108,35 +115,56 @@ export class V1Service {
   private readonly experiments = new Map<string, ExperimentAssignment>();
   private readonly apiKeys = new Map<string, ApiKeyRecord>();
 
-  constructor(private readonly jwtSecret: string) {}
+  constructor(
+    private readonly jwtSecret: string,
+    private readonly authStore: V1AuthStore | null = null,
+  ) {}
+
+  static async create(jwtSecret: string, databaseUrl: string | null): Promise<V1Service> {
+    const authStore = databaseUrl ? await V1AuthStore.connect(databaseUrl) : null;
+
+    return new V1Service(jwtSecret, authStore);
+  }
 
   async register(input: { email: string; password: string; username: string }): Promise<{ user: V1UserProfile; token: string }> {
-    const email = normalizeEmail(input.email);
+    const registration = validateRegistrationInput(input);
+    const existingEmail = this.authStore
+      ? await this.authStore.findUserByEmail(registration.email)
+      : this.usersByEmail.get(registration.email);
 
-    if (!email || input.password.length < 8 || input.username.trim().length < 2) {
-      throw new V1Error('invalid-registration', 'Email, username, and an 8+ character password are required.');
+    if (existingEmail) {
+      throw new V1Error('email-already-registered', '该邮箱已注册，请直接登录。');
     }
 
-    if (this.usersByEmail.has(email)) {
-      throw new V1Error('email-already-registered', 'Email is already registered.');
+    const usernameTaken = this.authStore
+      ? await this.authStore.usernameExists(registration.username)
+      : [...this.users.values()].some((user) => user.username.toLowerCase() === registration.username.toLowerCase());
+
+    if (usernameTaken) {
+      throw new V1Error('username-already-registered', '该用户名已被占用，请换一个。');
     }
 
-    const passwordSalt = randomBytes(16).toString('hex');
-    const passwordHash = await hashPassword(input.password, passwordSalt);
-    const now = new Date().toISOString();
-    const user: StoredUser = {
+    const passwordHash = await hashPassword(registration.password);
+    const userInput = {
       id: randomUUID(),
-      email,
-      username: input.username.trim(),
+      email: registration.email,
+      username: registration.username,
+      passwordHash,
       planType: 'free',
       dailyQuota: 5,
-      createdAt: now,
-      passwordHash,
-      passwordSalt,
-    };
+    } as const;
+    const now = new Date().toISOString();
+    const user: StoredUser = this.authStore
+      ? toStoredUser(await this.authStore.createUser(userInput))
+      : {
+          ...userInput,
+          createdAt: now,
+          failedLoginCount: 0,
+          lockedUntil: null,
+          lastLoginAt: null,
+        };
 
-    this.users.set(user.id, user);
-    this.usersByEmail.set(user.email, user);
+    this.cacheUser(user);
     this.recordUsage(user.id, 'user.registered', {});
 
     return {
@@ -146,34 +174,52 @@ export class V1Service {
   }
 
   async login(input: { email: string; password: string }): Promise<{ user: V1UserProfile; token: string }> {
-    const user = this.usersByEmail.get(normalizeEmail(input.email));
+    const credentials = validateLoginInput(input);
+    const storedUser = this.authStore
+      ? await this.authStore.findUserByEmail(credentials.email)
+      : this.usersByEmail.get(credentials.email) ?? null;
 
-    if (!user) {
-      throw new V1Error('invalid-credentials', 'Email or password is incorrect.');
+    if (!storedUser) {
+      await delayInvalidLogin();
+      throw new V1Error('invalid-credentials', '邮箱或密码不正确。');
     }
 
-    const passwordHash = await hashPassword(input.password, user.passwordSalt);
+    const user = this.authStore ? toStoredUser(storedUser) : storedUser;
+    const lockedUntil = user.lockedUntil ? new Date(user.lockedUntil).getTime() : 0;
 
-    if (passwordHash !== user.passwordHash) {
-      throw new V1Error('invalid-credentials', 'Email or password is incorrect.');
+    if (lockedUntil > Date.now()) {
+      throw new V1Error('account-locked', '登录失败次数过多，账号已临时锁定，请稍后再试。');
     }
 
-    this.recordUsage(user.id, 'user.logged_in', {});
+    const passwordMatches = await verifyPassword(credentials.password, user.passwordHash);
+
+    if (!passwordMatches) {
+      await this.recordLoginFailure(user);
+      throw new V1Error('invalid-credentials', '邮箱或密码不正确。');
+    }
+
+    const nextUser = this.authStore ? toStoredUser((await this.authStore.markLoginSuccess(user.id)) ?? user) : user;
+
+    nextUser.failedLoginCount = 0;
+    nextUser.lockedUntil = null;
+    nextUser.lastLoginAt = new Date().toISOString();
+    this.cacheUser(nextUser);
+    this.recordUsage(nextUser.id, 'user.logged_in', {});
 
     return {
-      user: toPublicUser(user),
-      token: this.signToken(user),
+      user: toPublicUser(nextUser),
+      token: this.signToken(nextUser),
     };
   }
 
-  authenticate(token: string | null): V1UserProfile | null {
+  async authenticate(token: string | null): Promise<V1UserProfile | null> {
     if (!token) {
       return null;
     }
 
     const [payloadRaw, signature] = token.split('.');
 
-    if (!payloadRaw || !signature || sign(payloadRaw, this.jwtSecret) !== signature) {
+    if (!payloadRaw || !signature || !verifySignature(payloadRaw, signature, this.jwtSecret)) {
       return null;
     }
 
@@ -184,11 +230,43 @@ export class V1Service {
         return null;
       }
 
-      const user = this.users.get(payload.sub);
+      const cachedUser = this.users.get(payload.sub);
 
-      return user ? toPublicUser(user) : null;
+      if (cachedUser) {
+        return toPublicUser(cachedUser);
+      }
+
+      const storedUser = this.authStore ? await this.authStore.findUserById(payload.sub) : null;
+
+      if (!storedUser) {
+        return null;
+      }
+
+      const user = toStoredUser(storedUser);
+      this.cacheUser(user);
+
+      return toPublicUser(user);
     } catch {
       return null;
+    }
+  }
+
+  private cacheUser(user: StoredUser): void {
+    this.users.set(user.id, user);
+    this.usersByEmail.set(user.email, user);
+  }
+
+  private async recordLoginFailure(user: StoredUser): Promise<void> {
+    const nextFailedLoginCount = user.failedLoginCount + 1;
+    const lockedUntil =
+      nextFailedLoginCount >= maxFailedLoginAttempts ? new Date(Date.now() + accountLockMilliseconds) : null;
+
+    user.failedLoginCount = nextFailedLoginCount;
+    user.lockedUntil = lockedUntil?.toISOString() ?? null;
+    this.cacheUser(user);
+
+    if (this.authStore) {
+      await this.authStore.markLoginFailure(user.id, lockedUntil);
     }
   }
 
@@ -321,8 +399,10 @@ export class V1Service {
       },
       {
         item: 'database',
-        status: 'warn',
-        detail: 'Prisma schema exists, but this V1 service is still using in-memory storage until Prisma client is wired.',
+        status: this.authStore ? 'pass' : 'warn',
+        detail: this.authStore
+          ? 'PostgreSQL auth store is enabled for users and login security state.'
+          : 'DATABASE_URL is not configured; V1 auth is using in-memory fallback.',
       },
       {
         item: 'error-tracking',
@@ -388,6 +468,7 @@ export class V1Service {
     intent.status = 'paid';
     user.planType = 'pro';
     user.dailyQuota = 100;
+    this.persistUserPlan(user);
     this.recordUsage(user.id, 'billing.subscription_started', intent);
 
     return {
@@ -400,6 +481,7 @@ export class V1Service {
     const user = this.requireUser(userId);
     user.planType = 'free';
     user.dailyQuota = 5;
+    this.persistUserPlan(user);
     this.recordUsage(user.id, 'billing.subscription_cancelled', {});
 
     return toPublicUser(user);
@@ -712,7 +794,7 @@ export class V1Service {
       JSON.stringify({
         sub: user.id,
         email: user.email,
-        exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        exp: Date.now() + tokenTtlMilliseconds,
       }),
     ).toString('base64url');
 
@@ -726,6 +808,13 @@ export class V1Service {
       timestamp: new Date().toISOString(),
       metadata,
     });
+
+    void this.authStore?.recordUsage(userId, action, metadata).catch(() => undefined);
+  }
+
+  private persistUserPlan(user: StoredUser): void {
+    this.cacheUser(user);
+    void this.authStore?.updatePlan(user.id, user.planType, user.dailyQuota).catch(() => undefined);
   }
 
   private requireUser(userId: string): StoredUser {
@@ -748,14 +837,108 @@ export class V1Error extends Error {
   }
 }
 
-async function hashPassword(password: string, salt: string): Promise<string> {
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16).toString('base64url');
   const hash = (await scryptAsync(password, salt, 64)) as Buffer;
 
-  return hash.toString('hex');
+  return `scrypt:v1:${salt}:${hash.toString('hex')}`;
+}
+
+async function verifyPassword(password: string, encodedHash: string): Promise<boolean> {
+  const [, version, salt, expectedHash] = encodedHash.split(':');
+
+  if (version !== 'v1' || !salt || !expectedHash) {
+    return false;
+  }
+
+  const hash = (await scryptAsync(password, salt, 64)) as Buffer;
+
+  return timingSafeHexEqual(hash.toString('hex'), expectedHash);
+}
+
+function validateRegistrationInput(input: { email: string; password: string; username: string }): {
+  email: string;
+  password: string;
+  username: string;
+} {
+  const email = normalizeEmail(input.email);
+  const username = input.username.trim();
+  const password = input.password;
+
+  if (!isValidEmail(email)) {
+    throw new V1Error('invalid-email', '请输入有效邮箱地址。');
+  }
+
+  if (!/^[\p{L}\p{N}_-]{2,32}$/u.test(username)) {
+    throw new V1Error('invalid-username', '用户名需为 2-32 位，可使用中英文、数字、下划线或短横线。');
+  }
+
+  const passwordError = getPasswordValidationError(password, email, username);
+
+  if (passwordError) {
+    throw new V1Error('weak-password', passwordError);
+  }
+
+  return {
+    email,
+    password,
+    username,
+  };
+}
+
+function validateLoginInput(input: { email: string; password: string }): { email: string; password: string } {
+  const email = normalizeEmail(input.email);
+
+  if (!isValidEmail(email) || input.password.length < 1 || input.password.length > 128) {
+    throw new V1Error('invalid-credentials', '邮箱或密码不正确。');
+  }
+
+  return {
+    email,
+    password: input.password,
+  };
 }
 
 function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function isValidEmail(value: string): boolean {
+  return value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/u.test(value);
+}
+
+function getPasswordValidationError(password: string, email: string, username: string): string | null {
+  if (password.length < 10 || password.length > 128) {
+    return '密码需为 10-128 位。';
+  }
+
+  const categoryCount = [
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /\d/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ].filter(Boolean).length;
+
+  if (categoryCount < 3) {
+    return '密码至少包含大小写字母、数字、符号中的 3 类。';
+  }
+
+  const normalizedPassword = password.toLowerCase();
+  const emailName = email.split('@')[0] ?? '';
+
+  if (commonWeakPasswords.has(normalizedPassword)) {
+    return '密码过于常见，请换一个。';
+  }
+
+  if (emailName.length >= 3 && normalizedPassword.includes(emailName)) {
+    return '密码不能包含邮箱名称。';
+  }
+
+  if (username.length >= 3 && normalizedPassword.includes(username.toLowerCase())) {
+    return '密码不能包含用户名。';
+  }
+
+  return null;
 }
 
 function toPublicUser(user: StoredUser): V1UserProfile {
@@ -769,8 +952,43 @@ function toPublicUser(user: StoredUser): V1UserProfile {
   };
 }
 
+function toStoredUser(record: StoredUserRecord): StoredUser {
+  return {
+    id: record.id,
+    email: record.email,
+    username: record.username,
+    passwordHash: record.passwordHash,
+    planType: record.planType,
+    dailyQuota: record.dailyQuota,
+    createdAt: record.createdAt,
+    failedLoginCount: record.failedLoginCount,
+    lockedUntil: record.lockedUntil,
+    lastLoginAt: record.lastLoginAt,
+  };
+}
+
 function sign(payload: string, secret: string): string {
   return createHmac('sha256', secret).update(payload).digest('base64url');
+}
+
+function verifySignature(payload: string, signature: string, secret: string): boolean {
+  const expected = Buffer.from(sign(payload, secret));
+  const actual = Buffer.from(signature);
+
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function timingSafeHexEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, 'hex');
+  const rightBuffer = Buffer.from(right, 'hex');
+
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+async function delayInvalidLogin(): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, 250);
+  });
 }
 
 function isToday(value: string): boolean {
