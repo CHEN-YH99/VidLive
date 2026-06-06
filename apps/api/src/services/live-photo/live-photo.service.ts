@@ -52,6 +52,7 @@ export class LivePhotoService {
     await mkdir(input.workDir, { recursive: true });
 
     const warnings: string[] = [];
+    const iosWarnings: string[] = [];
     const contentId = randomUUID().toUpperCase();
     const probe = await this.ffmpeg.probe(input.sourcePath);
     const startSeconds = clampNumber(input.draft.startSeconds, 0, Math.max(0, probe.durationSeconds - 1));
@@ -122,23 +123,25 @@ export class LivePhotoService {
       photoPath,
       movPath,
       contentId,
-      warnings,
+      warnings: iosWarnings,
     });
     const metadataInjected =
       metadataInjection.videoContentIdentifierInjected && metadataInjection.photoContentIdentifierInjected;
+    const androidMotionPhotoReady = androidMotionPhoto !== null && androidMotionPhoto.xmpInjected;
 
     await writeFile(
       manifestPath,
       JSON.stringify(
         {
           phase: 'Phase 0',
-          purpose: 'Live Photo technical compatibility POC',
+          purpose: 'Android Motion Photo generation POC',
+          primaryTarget: 'android-motion-photo',
           contentId,
           metadataInjected,
           metadataInjection,
-          livePhotoRecognition: metadataInjected
-            ? 'metadata-injected-import-still-requires-device-verification'
-            : 'not-ready-metadata-injection-missing',
+          livePhotoRecognition: androidMotionPhotoReady
+            ? 'android-motion-photo-generated'
+            : 'android-motion-photo-not-generated',
           sourcePath: input.sourcePath,
           draft: {
             ...input.draft,
@@ -157,6 +160,7 @@ export class LivePhotoService {
           androidMotionPhoto: androidMotionPhoto
             ? {
                 fileName: 'motion-photo_MP.jpg',
+                status: 'generated',
                 videoLengthBytes: androidMotionPhoto.videoLengthBytes,
                 xmpInjected: androidMotionPhoto.xmpInjected,
                 aspectRatioId: androidDraft.aspectRatioId,
@@ -164,20 +168,31 @@ export class LivePhotoService {
                 expectedAndroidViewer: 'Google Photos or OEM gallery with Motion Photo support',
               }
             : null,
+          iosLivePhoto: {
+            status: 'deferred',
+            note: 'Apple Live Photo pairing is not the current release target.',
+            metadataInjected,
+            metadataInjection,
+            recognition: metadataInjected
+              ? 'metadata-injected-import-still-requires-device-verification'
+              : 'not-targeted-for-current-android-release',
+            warnings: iosWarnings,
+          },
           warnings,
           nextVerification: [
-            'AirDrop ZIP to iPhone and try importing files.',
-            'Verify whether Photos recognizes the pair as Live Photo.',
-            'Safari ZIP download alone is expected to stay as files, not a Photos Live Photo asset.',
             'Copy motion-photo_MP.jpg to Android and open it in Google Photos or an OEM gallery.',
-            'Try iOS 17+ lock screen wallpaper with 1-2 second preset.',
+            'Confirm the gallery shows a Motion Photo or dynamic-photo playback affordance.',
+            'Keep the ZIP package only as a desktop fallback and debugging artifact.',
           ],
         },
         null,
         2,
       ),
     );
-    await writeFile(readmePath, createReadme(contentId, metadataInjected, metadataInjection, warnings));
+    await writeFile(
+      readmePath,
+      createReadme(contentId, androidMotionPhoto, metadataInjected, metadataInjection, warnings, iosWarnings),
+    );
     const zipEntries = [
       { sourcePath: photoPath, entryName: 'photo.jpg' },
       { sourcePath: movPath, entryName: 'video.mov' },
@@ -342,41 +357,53 @@ async function exifOutputContains(filePath: string, tags: string[], expectedValu
 
 function createReadme(
   contentId: string,
+  androidMotionPhoto: AndroidMotionPhotoResult | null,
   metadataInjected: boolean,
   metadataInjection: LivePhotoMetadataInjectionReport,
   warnings: string[],
+  iosWarnings: string[],
 ): string {
   const warningText = warnings.length > 0 ? warnings.map((warning) => `- ${warning}`).join('\n') : '- 暂无。';
+  const iosWarningText =
+    iosWarnings.length > 0 ? iosWarnings.map((warning) => `- ${warning}`).join('\n') : '- 暂无。';
 
   return [
-    'VidLive Phase 0 Live Photo POC',
+    'VidLive Phase 0 Android Motion Photo POC',
     '',
+    `Android Motion Photo: ${androidMotionPhoto ? 'generated' : 'not generated'}`,
+    `Primary Artifact: motion-photo_MP.jpg`,
     `Content Identifier: ${contentId}`,
+    '',
+    'Important:',
+    '- motion-photo_MP.jpg is the Android-first output. Open that file in Google Photos or an OEM gallery with Motion Photo support.',
+    '- Gallery recognition still depends on the Android viewer and must be verified on real devices.',
+    '- Apple Live Photo pairing is deferred and is not the current release success criterion.',
+    '',
+    'Artifacts:',
+    '- motion-photo_MP.jpg: Android Motion Photo single-file output',
+    '- photo.jpg: extracted key frame for fallback/debugging',
+    '- video.mov: H.264 MOV clip for fallback/debugging',
+    '- animated.webp: WebP fallback export',
+    '- manifest.json: generation parameters and probe result',
+    '',
+    'Manual verification:',
+    '1. Download or copy motion-photo_MP.jpg to an Android device.',
+    '2. Open it in Google Photos or the system gallery.',
+    '3. Confirm the gallery shows a Motion Photo or dynamic-photo playback affordance.',
+    '4. Keep the ZIP only when desktop transfer or debugging is needed.',
+    '',
+    'Warnings:',
+    warningText,
+    '',
+    'iOS Live Photo Metadata (deferred):',
     `Metadata Injected: ${metadataInjected ? 'yes' : 'no'}`,
     `MOV Content Identifier: ${metadataInjection.videoContentIdentifierInjected ? 'yes' : 'no'}`,
     `Photo MakerNote Template: ${metadataInjection.photoMakerNoteTemplateApplied ? 'yes' : 'no'}`,
     `Photo Content Identifier: ${metadataInjection.photoContentIdentifierInjected ? 'yes' : 'no'}`,
     `Photo ImageUniqueID: ${metadataInjection.photoImageUniqueIdInjected ? 'yes' : 'no'}`,
     '',
-    'Important:',
-    '- This ZIP is a paired media package, not a file that iPhone Safari can directly save as a Photos Live Photo.',
-    '- Photos recognition still depends on the import path and must be verified on real devices.',
-    '',
-    'Artifacts:',
-    '- photo.jpg: extracted key frame',
-    '- video.mov: H.264 MOV clip',
-    '- motion-photo_MP.jpg: Android Motion Photo single-file experiment',
-    '- animated.webp: WebP fallback export',
-    '- manifest.json: generation parameters and probe result',
-    '',
-    'Manual verification:',
-    '1. Transfer this ZIP to iPhone by AirDrop or Files.',
-    '2. Import photo.jpg and video.mov using the selected save path.',
-    '3. Check Photos Live Photo recognition.',
-    '4. Set as iOS 17+ lock screen wallpaper and record playback result.',
-    '',
-    'Warnings:',
-    warningText,
+    'iOS Deferred Notes:',
+    iosWarningText,
   ].join('\n');
 }
 

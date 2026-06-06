@@ -8,11 +8,15 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps ./apps
-COPY packages ./packages
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/shared/package.json packages/shared/package.json
 COPY tsconfig.base.json ./
 
 RUN pnpm install --frozen-lockfile
+
+COPY apps ./apps
+COPY packages ./packages
 
 RUN pnpm --filter @vidlive/shared run build
 RUN if [ -f apps/api/prisma/schema.prisma ] && pnpm exec prisma --version >/dev/null 2>&1; then \

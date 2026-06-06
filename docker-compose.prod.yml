@@ -74,8 +74,11 @@ services:
       PORT: ${API_PORT:-3001}
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/video_prompt?schema=public}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-3010}:3001"
+    volumes:
+      - backend_uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,6 +147,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  backend_uploads:
 
 networks:
   vidlive:

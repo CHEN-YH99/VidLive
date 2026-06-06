@@ -12,11 +12,15 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps ./apps
-COPY packages ./packages
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/shared/package.json packages/shared/package.json
 COPY tsconfig.base.json ./
 
 RUN pnpm install --frozen-lockfile
+
+COPY apps ./apps
+COPY packages ./packages
 
 RUN pnpm --filter @vidlive/shared run build
 RUN pnpm --filter @vidlive/web run build
