@@ -23,6 +23,7 @@ import {
   Upload,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { type FileRejection, useDropzone } from 'react-dropzone';
@@ -175,6 +176,18 @@ interface CompatibilityFormState {
 interface CompatibilitySubmitResponse {
   report: CompatibilityReport;
   summary: CompatibilitySummary;
+}
+
+interface CompatibilityDownloadContext {
+  fileName: string;
+  downloadedAt: string;
+  source: 'android-motion-photo' | 'cloud-package' | 'local-export' | 'test-kit' | 'manual';
+}
+
+interface CloudDownloadRequest {
+  url: string;
+  fileName: string;
+  source: 'android-motion-photo' | 'cloud-package';
 }
 
 const compatibilityViewerOptions: Array<{ id: CompatibilityViewerId; label: string }> = [
@@ -415,6 +428,17 @@ export function VidLiveTool() {
   const [exportResult, setExportResult] = useState<LocalExportResult | null>(null);
   const [cloudJob, setCloudJob] = useState<CloudJob | null>(null);
   const [cloudConsentConfirmed, setCloudConsentConfirmed] = useState(false);
+  const [compatibilityDialogOpen, setCompatibilityDialogOpen] = useState(false);
+  const [lastSuccessfulDownload, setLastSuccessfulDownload] = useState<CompatibilityDownloadContext | null>(null);
+  const [downloadBusySource, setDownloadBusySource] = useState<CloudDownloadRequest['source'] | null>(null);
+
+  const openCompatibilityLab = useCallback((context: Omit<CompatibilityDownloadContext, 'downloadedAt'>) => {
+    setLastSuccessfulDownload({
+      ...context,
+      downloadedAt: new Date().toISOString(),
+    });
+    setCompatibilityDialogOpen(true);
+  }, []);
 
   const refreshCloudJob = useCallback(async (jobId: string): Promise<CloudJob | null> => {
     let response: Response;
@@ -667,6 +691,47 @@ export function VidLiveTool() {
     }));
   };
 
+  const downloadLocalArtifact = (artifact: LocalExportArtifact) => {
+    downloadBlob(artifact.blob, artifact.fileName);
+    openCompatibilityLab({
+      fileName: artifact.fileName,
+      source: 'local-export',
+    });
+  };
+
+  const downloadCloudArtifact = async ({
+    url,
+    fileName,
+    source,
+  }: {
+    url: string;
+    fileName: string;
+    source: 'android-motion-photo' | 'cloud-package';
+  }) => {
+    setDownloadBusySource(source);
+    setFailureReason(null);
+
+    try {
+      const response = await fetch(url, { cache: 'no-store' });
+
+      if (!response.ok) {
+        setFailureReason(response.status === 404 ? 'expired-link' : 'cloud-timeout');
+        return;
+      }
+
+      const blob = await response.blob();
+      downloadBlob(blob, fileName);
+      openCompatibilityLab({
+        fileName,
+        source,
+      });
+    } catch {
+      setFailureReason('cloud-timeout');
+    } finally {
+      setDownloadBusySource(null);
+    }
+  };
+
   const handleGenerate = async () => {
     if (!file || !previewUrl || !metadata) {
       setFailureReason('metadata-read-failed');
@@ -866,8 +931,9 @@ export function VidLiveTool() {
                     cloudJob.androidMotionPhoto ? toApiUrl(cloudJob.androidMotionPhoto.downloadUrl) : null
                   }
                   previewPhotoUrl={cloudJob.previewPhoto ? toApiUrl(cloudJob.previewPhoto.downloadUrl) : null}
-                  onDownload={(url) => {
-                    window.location.assign(toApiUrl(url));
+                  downloadingSource={downloadBusySource}
+                  onDownload={(download) => {
+                    void downloadCloudArtifact(download);
                   }}
                   onDelete={async () => {
                     await fetch(toApiUrl(`/api/conversions/cloud-jobs/${cloudJob.id}`), {
@@ -883,14 +949,13 @@ export function VidLiveTool() {
                 <ExportResultPanel
                   result={exportResult}
                   packageArtifact={packageArtifact}
-                  onDownload={(artifact) => downloadBlob(artifact.blob, artifact.fileName)}
+                  onDownload={downloadLocalArtifact}
                 />
               )}
             </div>
 
             <aside className="flex min-w-0 flex-col gap-4">
               <SidebarInfoCarousel />
-              <CompatibilityLabPanel />
 
               <Panel title="处理模式" icon={<CloudOff size={18} />}>
                 <div className="grid grid-cols-2 gap-2">
@@ -1123,6 +1188,15 @@ export function VidLiveTool() {
             </aside>
           </div>
 
+          <CompatibilityLabTriggerButton
+            reportCountLabel={lastSuccessfulDownload ? '已下载' : '众测'}
+            onClick={() => setCompatibilityDialogOpen(true)}
+          />
+          <CompatibilityLabDialog
+            open={compatibilityDialogOpen}
+            downloadContext={lastSuccessfulDownload}
+            onOpenChange={setCompatibilityDialogOpen}
+          />
         </div>
       </section>
     </main>
@@ -1629,7 +1703,97 @@ function ExportResultPanel({
   );
 }
 
-function CompatibilityLabPanel() {
+function CompatibilityLabTriggerButton({
+  reportCountLabel,
+  onClick,
+}: {
+  reportCountLabel: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="fixed bottom-4 right-4 z-40 inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#23b7a4]"
+    >
+      <BadgeCheck size={15} className="text-[#23b7a4]" />
+      {reportCountLabel}
+    </button>
+  );
+}
+
+function CompatibilityLabDialog({
+  open,
+  downloadContext,
+  onOpenChange,
+}: {
+  open: boolean;
+  downloadContext: CompatibilityDownloadContext | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onOpenChange(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onOpenChange, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-3 sm:items-center sm:p-5">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="compatibility-lab-title"
+        className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-3xl flex-col overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay sm:max-h-[calc(100vh-2.5rem)]"
+      >
+        <div className="flex items-start justify-between gap-3 border-b-2 border-ink bg-white p-4">
+          <div>
+            <p id="compatibility-lab-title" className="flex items-center gap-2 text-sm font-black text-ink">
+              <BadgeCheck size={18} className="text-[#23b7a4]" />
+              机型众测
+            </p>
+            <p className="mt-1 text-xs font-bold leading-5 text-ink/60">
+              {downloadContext
+                ? `已触发下载：${downloadContext.fileName}`
+                : '补充当前设备识别结果，后续兼容判断才不会靠玄学。'}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="关闭机型众测"
+            onClick={() => onOpenChange(false)}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+          >
+            <X size={17} />
+          </button>
+        </div>
+        <div className="min-h-0 overflow-y-auto p-4">
+          <CompatibilityLabPanel
+            key={downloadContext?.downloadedAt ?? 'manual'}
+            downloadContext={downloadContext}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompatibilityLabPanel({ downloadContext }: { downloadContext?: CompatibilityDownloadContext | null }) {
   const [testKit, setTestKit] = useState<CompatibilityTestKit | null>(null);
   const [summary, setSummary] = useState<CompatibilitySummary | null>(null);
   const [form, setForm] = useState<CompatibilityFormState>(() => createInitialCompatibilityForm());
@@ -1760,6 +1924,15 @@ function CompatibilityLabPanel() {
   return (
     <Panel title="机型众测" icon={<BadgeCheck size={18} />}>
       <div className="grid gap-3">
+        {downloadContext && (
+          <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-3">
+            <p className="text-xs font-black text-ink">下载已触发</p>
+            <p className="mt-1 break-all text-xs font-semibold leading-5 text-ink/65">
+              {downloadContext.fileName} / {new Date(downloadContext.downloadedAt).toLocaleString('zh-CN')}
+            </p>
+          </div>
+        )}
+
         <div className="grid grid-cols-3 gap-2">
           <a
             href={sampleUrl ?? undefined}
@@ -2000,6 +2173,7 @@ function CloudJobPanel({
   downloadUrl,
   androidMotionPhotoUrl,
   previewPhotoUrl,
+  downloadingSource,
   onDownload,
   onDelete,
 }: {
@@ -2007,7 +2181,8 @@ function CloudJobPanel({
   downloadUrl: string | null;
   androidMotionPhotoUrl: string | null;
   previewPhotoUrl: string | null;
-  onDownload: (url: string) => void;
+  downloadingSource: CloudDownloadRequest['source'] | null;
+  onDownload: (download: CloudDownloadRequest) => void;
   onDelete: () => Promise<void>;
 }) {
   const [qrPreview, setQrPreview] = useState<{ downloadUrl: string; dataUrl: string } | null>(null);
@@ -2019,10 +2194,13 @@ function CloudJobPanel({
     expired: '已过期',
     deleted: '已删除',
   };
-  const canDownload = job.status === 'completed' && Boolean(job.artifact);
+  const canDownload = job.status === 'completed' && Boolean(job.artifact && downloadUrl);
   const canDownloadAndroidMotionPhoto = job.status === 'completed' && Boolean(job.androidMotionPhoto && androidMotionPhotoUrl);
   const canPreviewPhoto = job.status === 'completed' && Boolean(job.previewPhoto) && Boolean(previewPhotoUrl);
   const activeDownloadUrl = canDownloadAndroidMotionPhoto ? androidMotionPhotoUrl : canDownload ? downloadUrl : null;
+  const anyDownloadBusy = Boolean(downloadingSource);
+  const androidMotionPhotoBusy = downloadingSource === 'android-motion-photo';
+  const packageDownloadBusy = downloadingSource === 'cloud-package';
   const androidRelevantWarnings = job.warnings.filter((warning) => {
     return !warning.includes('MakerNote') && !warning.includes('ContentIdentifier') && !warning.includes('Apple');
   });
@@ -2131,14 +2309,21 @@ function CloudJobPanel({
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {canDownloadAndroidMotionPhoto && androidMotionPhotoUrl ? (
-          <a
-            href={androidMotionPhotoUrl}
-            download={job.androidMotionPhoto?.fileName ?? 'motion-photo_MP.jpg'}
-            className={`${downloadButtonClass} h-12 bg-[#ff715b] text-white sm:col-span-2`}
+          <button
+            type="button"
+            disabled={anyDownloadBusy}
+            onClick={() => {
+              onDownload({
+                url: androidMotionPhotoUrl,
+                fileName: job.androidMotionPhoto?.fileName ?? 'motion-photo_MP.jpg',
+                source: 'android-motion-photo',
+              });
+            }}
+            className={`${downloadButtonClass} h-12 bg-[#ff715b] text-white disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40 sm:col-span-2`}
           >
-            <ImageIcon size={16} />
-            下载安卓实况图
-          </a>
+            {androidMotionPhotoBusy ? <Loader2 size={16} className="animate-spin" /> : <ImageIcon size={16} />}
+            {androidMotionPhotoBusy ? '下载中' : '下载安卓实况图'}
+          </button>
         ) : (
           <button type="button" disabled className={`${disabledDownloadButtonClass} sm:col-span-2`}>
             <ImageIcon size={16} />
@@ -2147,16 +2332,20 @@ function CloudJobPanel({
         )}
         <button
           type="button"
-          disabled={!canDownload}
+          disabled={!canDownload || anyDownloadBusy}
           onClick={() => {
-            if (job.artifact) {
-              onDownload(job.artifact.downloadUrl);
+            if (job.artifact && downloadUrl) {
+              onDownload({
+                url: downloadUrl,
+                fileName: job.artifact.fileName,
+                source: 'cloud-package',
+              });
             }
           }}
           className={`${downloadButtonClass} bg-[#23b7a4] text-white disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40`}
         >
-          <FileArchive size={16} />
-          完整 ZIP
+          {packageDownloadBusy ? <Loader2 size={16} className="animate-spin" /> : <FileArchive size={16} />}
+          {packageDownloadBusy ? '下载中' : '完整 ZIP'}
         </button>
         <button
           type="button"
