@@ -61,8 +61,8 @@ export async function generateLocalExport(
   const baseName = `${sanitizeFileName(removeExtension(file.name))}-${draft.presetId}-${exportId.slice(0, 8)}`;
   const durationSeconds = Math.max(productLimits.minDurationSeconds, draft.endSeconds - draft.startSeconds);
   const warnings: string[] = [
-    '当前本地导出的是 ZIP 素材包；iPhone Safari 下载后会保存在文件 App，不会自动写入相册成为实况照片。',
-    '完整 Live Photo 识别需要云端/容器注入 Apple 元数据，并通过 AirDrop、Shortcuts 或相册导入路径做真机验证。',
+    '当前本地导出的是 ZIP 素材包，不是 Android Motion Photo 单文件。',
+    '安卓实况图以云端生成的 motion-photo_MP.jpg 为准，优先用 Google Photos 或抖音复测。',
   ];
   const artifacts: LocalExportArtifact[] = [];
 
@@ -139,7 +139,7 @@ export async function generateLocalExport(
         id: 'source-video',
         kind: 'source',
         label: '原始视频兜底',
-        description: '本地裁剪录制失败时保留的原始素材，方便继续用 Shortcuts、AirDrop 或云端处理复测。',
+        description: '本地裁剪录制失败时保留的原始素材，方便继续用云端处理复测。',
         fileName: `${baseName}-source${sourceExtension}`,
         mimeType: file.type || (sourceExtension === '.mov' ? 'video/quicktime' : 'video/mp4'),
         blob: file,
@@ -161,7 +161,7 @@ export async function generateLocalExport(
     livePhotoRecognition: 'not-ready-local-web-export',
     metadataInjected: false,
     warnings,
-    note: 'Phase 1 本地 MVP 导出包。当前 ZIP 只是文件 App 可下载素材包，不会自动成为 iOS 相册实况照片；Apple Live Photo 完整元数据和真机保存路径仍需按兼容矩阵验证。',
+    note: 'Phase 1 本地 MVP 导出包。当前 ZIP 用于预览、裁剪和兜底导出；Android Motion Photo 单文件以云端 motion-photo_MP.jpg 为准。',
   });
   const readmeBlob = createTextBlob(createReadmeText(draft, warnings));
 
@@ -179,7 +179,7 @@ export async function generateLocalExport(
       id: 'readme',
       kind: 'manifest',
       label: '保存指引',
-      description: '包含 iPhone Safari、AirDrop、Shortcuts 和锁屏排查说明。',
+      description: '包含 Android Motion Photo、Google Photos、抖音和厂商系统相册兼容性排查说明。',
       fileName: `${baseName}-README.txt`,
       mimeType: 'text/plain',
       blob: readmeBlob,
@@ -203,7 +203,7 @@ export async function generateLocalExport(
         id: 'package',
         kind: 'package',
         label: '素材 ZIP 包',
-        description: '包含封面、动态片段、manifest 和保存指引；iPhone Safari 下载后不会直接变成相册实况照片。',
+        description: '包含封面、动态片段、manifest 和保存指引；安卓实况单文件请使用云端生成结果。',
         fileName: `${baseName}.zip`,
         mimeType: 'application/zip',
         blob: packageBlob,
@@ -324,7 +324,7 @@ function createReadmeText(draft: ConversionDraft, warnings: string[]): string {
   return [
     'VidLive Phase 1 本地导出包',
     '',
-    '重要说明：当前 ZIP 是本地素材包。iPhone Safari 下载后只是文件 App 里的视频、关键帧和说明文件，不会自动变成 iOS 相册里的实况照片。若要验证真正 Live Photo，需要走云端元数据包、AirDrop/Shortcuts 或后续真机导入流程。',
+    '重要说明：当前 ZIP 是本地素材包，用于预览、裁剪、关键帧和兜底导出；它不是 Android Motion Photo 单文件。若要验证安卓实况图，请使用云端生成的 motion-photo_MP.jpg。',
     '',
     `预设：${preset.label}`,
     `片段：${draft.startSeconds.toFixed(2)}s - ${draft.endSeconds.toFixed(2)}s`,
@@ -333,14 +333,15 @@ function createReadmeText(draft: ConversionDraft, warnings: string[]): string {
     `画面：${draft.fitMode === 'cover' ? '裁切填满' : '保留完整画面并补背景'}`,
     '',
     '保存路径建议：',
-    '1. iPhone Safari：下载导出包后先在文件 App 查看；不要把 ZIP 下载成功当成相册 Live Photo 成功。',
-    '2. 桌面浏览器：下载 ZIP 后，通过 AirDrop 或数据线发送到 iPhone。',
-    '3. 锁屏壁纸：优先使用 1-2 秒竖屏片段，确认 iOS 17+ 和 Live 开关。',
+    '1. 安卓浏览器：云端生成后直接下载 motion-photo_MP.jpg。',
+    '2. Google Photos / 抖音：优先用它们验证动态图入口。',
+    '3. ColorOS / 鸿蒙系统相册：若只显示静态图，按查看器兼容性限制记录。',
+    '4. 桌面浏览器：下载 ZIP 后，取出素材做兜底或调试。',
     '',
     '注意：',
     warningText,
     '',
-    '当前为 Phase 1 MVP。本地包用于跑通导入、裁剪、关键帧和导出闭环；Apple Live Photo 完整元数据仍需云端/容器生成和真机验证。',
+    '当前为 Phase 1 MVP。本地包用于跑通导入、裁剪、关键帧和导出闭环；安卓实况主产物由云端链路生成。',
   ].join('\n');
 }
 

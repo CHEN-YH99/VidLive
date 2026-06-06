@@ -102,8 +102,8 @@ const modeHelpText = {
 } as const;
 
 const presetHelpText: Record<ExportPresetId, string> = {
-  'standard-live-photo': '默认 3 秒，优先保留原素材比例，适合 Google Photos 或系统相册的标准动态照片验证。',
-  'ios-lock-screen': '默认 2 秒，优先 9:16 竖屏，适合安卓系统相册识别和手机壁纸素材验证。',
+  'standard-live-photo': '默认 3 秒，优先保留原素材比例，适合 Google Photos 或抖音的标准动态照片验证。',
+  'ios-lock-screen': '默认 2 秒，优先 9:16 竖屏，适合 Google Photos 和抖音识别；ColorOS / 鸿蒙系统相册可能不识别。',
   'social-fallback': '输出 MP4 / GIF / WebP 等兜底格式，不追求严格实况结构；适合社交平台无法识别动态照片时发布。',
 };
 
@@ -1264,7 +1264,7 @@ function SavePathPanel() {
         id: 'android',
         icon: <Smartphone size={20} />,
         title: '安卓实况路径',
-        text: '手机直接下载 motion-photo_MP.jpg，用系统相册或 Google Photos 打开检查动态照片入口。',
+        text: '手机直接下载 motion-photo_MP.jpg，优先用 Google Photos 或抖音检查动态照片入口。',
       },
       {
         id: 'desktop',
@@ -1397,7 +1397,7 @@ function SidebarInfoCarousel() {
       content: (
         <div className="grid h-full grid-rows-5 gap-1.5">
           <ToolboxMiniItem label="Video/GIF to Android Motion Photo" status="available" />
-          <ToolboxMiniItem label="安卓相册识别矩阵" status="preview" />
+          <ToolboxMiniItem label="安卓查看器识别矩阵" status="preview" />
           <ToolboxMiniItem label="Motion Photo to GIF/MP4" status="preview" />
           <ToolboxMiniItem label="Image to Motion Photo" status="preview" />
           <ToolboxMiniItem label="AI Image Motion" status="planned" />
@@ -1658,7 +1658,7 @@ function CloudJobPanel({
         <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#d9f99d] p-3">
           <p className="text-xs font-black text-ink">安卓验收</p>
           <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
-            下载单文件 motion-photo_MP.jpg，用系统相册或 Google Photos 打开，检查动态照片/实况入口。
+            下载单文件 motion-photo_MP.jpg，优先用 Google Photos 或抖音打开。ColorOS / 鸿蒙系统相册可能只当普通照片显示。
           </p>
         </div>
       )}
