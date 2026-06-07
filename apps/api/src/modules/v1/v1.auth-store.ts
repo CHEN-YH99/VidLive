@@ -129,6 +129,21 @@ export class V1AuthStore {
     );
   }
 
+  async clearLoginLock(userId: string): Promise<StoredUserRecord | null> {
+    const result = await this.pool.query<UserRow>(
+      `update users
+          set failed_login_count = 0,
+              locked_until = null,
+              updated_at = now()
+        where id = $1
+        returning id, email, username, password_hash, plan_type, daily_quota, created_at,
+                  failed_login_count, locked_until, last_login_at`,
+      [userId],
+    );
+
+    return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+  }
+
   async updatePlan(userId: string, planType: 'free' | 'pro', dailyQuota: number): Promise<StoredUserRecord | null> {
     const result = await this.pool.query<UserRow>(
       `update users

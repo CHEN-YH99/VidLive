@@ -203,11 +203,15 @@ export class V1Service {
       throw new V1Error('invalid-credentials', '邮箱或密码不正确。');
     }
 
-    const user = this.authStore ? toStoredUser(storedUser) : storedUser;
+    let user = this.authStore ? toStoredUser(storedUser) : storedUser;
     const lockedUntil = user.lockedUntil ? new Date(user.lockedUntil).getTime() : 0;
 
     if (lockedUntil > Date.now()) {
       throw new V1Error('account-locked', '登录失败次数过多，账号已临时锁定，请稍后再试。');
+    }
+
+    if (user.lockedUntil && (!Number.isFinite(lockedUntil) || lockedUntil <= Date.now())) {
+      user = await this.clearLoginLock(user);
     }
 
     const passwordMatches = await verifyPassword(credentials.password, user.passwordHash);
@@ -291,6 +295,22 @@ export class V1Service {
     if (this.authStore) {
       await this.authStore.markLoginFailure(user.id, lockedUntil);
     }
+  }
+
+  private async clearLoginLock(user: StoredUser): Promise<StoredUser> {
+    user.failedLoginCount = 0;
+    user.lockedUntil = null;
+    this.cacheUser(user);
+
+    if (!this.authStore) {
+      return user;
+    }
+
+    const clearedUser = await this.authStore.clearLoginLock(user.id);
+    const nextUser = clearedUser ? toStoredUser(clearedUser) : user;
+    this.cacheUser(nextUser);
+
+    return nextUser;
   }
 
   getUsage(userId: string): V1UsageSummary {

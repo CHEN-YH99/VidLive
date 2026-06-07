@@ -5,10 +5,8 @@ services:
     image: postgres:16-alpine
     container_name: vidlive-postgres
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-video_prompt}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    env_file:
+      - .env.production
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -43,9 +41,6 @@ services:
       - .env.production
     environment:
       NODE_ENV: production
-      PORT: ${API_PORT:-3001}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/video_prompt?schema=public}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     command:
       [
         "sh",
@@ -71,9 +66,7 @@ services:
       - .env.production
     environment:
       NODE_ENV: production
-      PORT: ${API_PORT:-3001}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/video_prompt?schema=public}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      PORT: 3001
       UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-3010}:3001"
