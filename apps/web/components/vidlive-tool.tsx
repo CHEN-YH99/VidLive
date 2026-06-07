@@ -534,7 +534,7 @@ function createAuthHeaders(session: AuthSession): Record<string, string> {
 }
 
 async function fetchCurrentAuthSession(): Promise<AuthSession | null> {
-  const response = await fetch(toApiUrl('/api/v1/me'), {
+  const response = await fetch(toApiUrl('/api/v1/auth/session'), {
     cache: 'no-store',
     credentials: 'include',
   });
@@ -1146,7 +1146,7 @@ export function VidLiveTool() {
     setGenerationAccess(null);
 
     try {
-      const response = await fetch(toApiUrl('/api/v1/me'), {
+      const response = await fetch(toApiUrl('/api/v1/auth/session'), {
         cache: 'no-store',
         credentials: 'include',
         headers: createAuthHeaders(authSession),
@@ -1155,7 +1155,18 @@ export function VidLiveTool() {
         | { user?: AuthUser; usage?: AuthUsageSummary; message?: string }
         | null;
 
-      if (response.status === 401) {
+      if (!response.ok) {
+        setGenerationAccess({
+          kind: 'error',
+          usage: null,
+          resource: null,
+          message: payload?.message ?? '账号资源校验失败，请稍后再试。',
+        });
+        setGenerationAccessDialogOpen(true);
+        return;
+      }
+
+      if (!payload?.user) {
         setAuthSession(null);
         setGenerationAccess({
           kind: 'auth-required',
@@ -1167,7 +1178,7 @@ export function VidLiveTool() {
         return;
       }
 
-      if (!response.ok || !payload?.user || !payload.usage) {
+      if (!payload.usage) {
         setGenerationAccess({
           kind: 'error',
           usage: null,
@@ -2678,7 +2689,55 @@ function getPasswordRules(password: string, email: string, username: string): Pa
 }
 
 function isValidAuthEmail(value: string): boolean {
-  return value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/u.test(value);
+  if (value.length > 254) {
+    return false;
+  }
+
+  const parts = value.split('@');
+
+  if (parts.length !== 2) {
+    return false;
+  }
+
+  const localPart = parts[0];
+  const domain = parts[1];
+
+  if (
+    !localPart ||
+    !domain ||
+    localPart.length > 64 ||
+    localPart.startsWith('.') ||
+    localPart.endsWith('.') ||
+    localPart.includes('..') ||
+    !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/i.test(localPart)
+  ) {
+    return false;
+  }
+
+  return isValidAuthEmailDomain(domain);
+}
+
+function isValidAuthEmailDomain(domain: string): boolean {
+  if (domain.length > 253 || domain.includes('..')) {
+    return false;
+  }
+
+  const labels = domain.split('.');
+
+  if (labels.length < 2) {
+    return false;
+  }
+
+  return labels.every((label, index) => {
+    const isTopLevelDomain = index === labels.length - 1;
+
+    return (
+      label.length > 0 &&
+      label.length <= 63 &&
+      /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label) &&
+      (!isTopLevelDomain || /^[a-z]{2,63}$/i.test(label))
+    );
+  });
 }
 
 function AuthDialog({

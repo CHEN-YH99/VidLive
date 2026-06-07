@@ -93,6 +93,15 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     };
   });
 
+  server.get('/api/v1/auth/session', async (request) => {
+    const user = await authenticateRequest(service, request);
+
+    return {
+      user,
+      usage: user ? service.getUsage(user.id) : null,
+    };
+  });
+
   server.get('/api/v1/me', async (request, reply) => {
     const user = await authenticateRequest(service, request);
 

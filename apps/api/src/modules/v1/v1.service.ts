@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
+import { resolve4, resolve6, resolveMx } from 'node:dns/promises';
 import { promisify } from 'node:util';
 import { V1AuthStore, type StoredUserRecord } from './v1.auth-store.js';
 
@@ -6,10 +7,13 @@ const scryptAsync = promisify(scrypt);
 const tokenTtlMilliseconds = 7 * 24 * 60 * 60 * 1000;
 const maxFailedLoginAttempts = 5;
 const accountLockMilliseconds = 15 * 60 * 1000;
+const emailDomainLookupTimeoutMilliseconds = 3000;
+const emailDomainValidationCacheTtlMilliseconds = 15 * 60 * 1000;
 const freeDailyQuota = 5;
 const proDailyQuota = 100;
 const unlimitedDailyQuota = -1;
 const commonWeakPasswords = new Set(['password', 'password123', '12345678', '123456789', 'qwerty123', 'vidlive123']);
+const emailDomainValidationCache = new Map<string, { canReceiveMail: boolean; expiresAt: number }>();
 
 export interface V1UserProfile {
   id: string;
@@ -140,6 +144,7 @@ export class V1Service {
 
   async register(input: { email: string; password: string; username: string }): Promise<{ user: V1UserProfile; token: string }> {
     const registration = validateRegistrationInput(input);
+    await assertEmailDomainCanReceiveMail(registration.email);
     const existingEmail = this.authStore
       ? await this.authStore.findUserByEmail(registration.email)
       : this.usersByEmail.get(registration.email);
@@ -973,7 +978,127 @@ function isUnlimitedDailyQuota(value: number): boolean {
 }
 
 function isValidEmail(value: string): boolean {
-  return value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/u.test(value);
+  if (value.length > 254) {
+    return false;
+  }
+
+  const parts = value.split('@');
+
+  if (parts.length !== 2) {
+    return false;
+  }
+
+  const localPart = parts[0];
+  const domain = parts[1];
+
+  if (
+    !localPart ||
+    !domain ||
+    localPart.length > 64 ||
+    localPart.startsWith('.') ||
+    localPart.endsWith('.') ||
+    localPart.includes('..') ||
+    !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/i.test(localPart)
+  ) {
+    return false;
+  }
+
+  return isValidEmailDomain(domain);
+}
+
+function isValidEmailDomain(domain: string): boolean {
+  if (domain.length > 253 || domain.includes('..')) {
+    return false;
+  }
+
+  const labels = domain.split('.');
+
+  if (labels.length < 2) {
+    return false;
+  }
+
+  return labels.every((label, index) => {
+    const isTopLevelDomain = index === labels.length - 1;
+
+    return (
+      label.length > 0 &&
+      label.length <= 63 &&
+      /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label) &&
+      (!isTopLevelDomain || /^[a-z]{2,63}$/i.test(label))
+    );
+  });
+}
+
+async function assertEmailDomainCanReceiveMail(email: string): Promise<void> {
+  const domain = email.split('@')[1];
+
+  if (!domain || !isValidEmailDomain(domain)) {
+    throw new V1Error('invalid-email', '请输入有效邮箱地址。');
+  }
+
+  if (shouldBypassEmailDomainLookup(domain)) {
+    return;
+  }
+
+  if (!(await canEmailDomainReceiveMail(domain))) {
+    throw new V1Error('invalid-email-domain', '邮箱域名无法接收邮件，请换用真实邮箱。');
+  }
+}
+
+function shouldBypassEmailDomainLookup(domain: string): boolean {
+  return process.env.NODE_ENV !== 'production' && domain.toLowerCase().endsWith('.test');
+}
+
+async function canEmailDomainReceiveMail(domain: string): Promise<boolean> {
+  const now = Date.now();
+  const cached = emailDomainValidationCache.get(domain);
+
+  if (cached && cached.expiresAt > now) {
+    return cached.canReceiveMail;
+  }
+
+  const canReceiveMail = await lookupEmailDomain(domain);
+  emailDomainValidationCache.set(domain, {
+    canReceiveMail,
+    expiresAt: now + emailDomainValidationCacheTtlMilliseconds,
+  });
+
+  return canReceiveMail;
+}
+
+async function lookupEmailDomain(domain: string): Promise<boolean> {
+  try {
+    const mxRecords = await withDnsTimeout(resolveMx(domain));
+
+    if (mxRecords.length > 0) {
+      return mxRecords.some((record) => record.exchange.length > 0 && record.exchange !== '.');
+    }
+  } catch {
+    // Domains without MX can still receive mail via A/AAAA fallback; try that before rejecting.
+  }
+
+  const addressLookups = await Promise.allSettled([withDnsTimeout(resolve4(domain)), withDnsTimeout(resolve6(domain))]);
+
+  return addressLookups.some((result) => result.status === 'fulfilled' && result.value.length > 0);
+}
+
+async function withDnsTimeout<T>(lookup: Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      lookup,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error('dns-lookup-timeout'));
+        }, emailDomainLookupTimeoutMilliseconds);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function getPasswordValidationError(password: string, email: string, username: string): string | null {
