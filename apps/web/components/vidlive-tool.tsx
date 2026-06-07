@@ -3192,20 +3192,20 @@ function CompatibilityLabDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/45 px-[9vw] py-[8vh] lg:p-5">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/45 p-4 lg:p-5">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="compatibility-lab-title"
-        className="flex h-[min(72vh,123vw,36rem)] w-[min(82vw,48vh,24rem)] flex-col overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay lg:h-auto lg:max-h-[min(82vh,46rem)] lg:w-[min(82vw,48rem)] lg:max-w-[48rem]"
+        className="flex max-h-[min(84dvh,46rem)] w-[min(92vw,48rem)] flex-col overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay"
       >
-        <div className="flex items-start justify-between gap-3 border-b-2 border-ink bg-white p-3 lg:p-4">
-          <div>
-            <p id="compatibility-lab-title" className="flex items-center gap-2 text-sm font-black text-ink">
+        <div className="flex items-start justify-between gap-2 border-b-2 border-ink bg-white p-2.5 lg:gap-3 lg:p-4">
+          <div className="min-w-0">
+            <p id="compatibility-lab-title" className="flex items-center gap-1.5 text-xs font-black text-ink lg:gap-2 lg:text-sm">
               <BadgeCheck size={18} className="text-[#23b7a4]" />
               机型众测
             </p>
-            <p className="mt-1 text-xs font-bold leading-5 text-ink/60">
+            <p className="mt-1 break-all text-[11px] font-bold leading-4 text-ink/60 lg:text-xs lg:leading-5">
               {downloadContext
                 ? `已触发下载：${downloadContext.fileName}`
                 : '补充当前设备识别结果，后续兼容判断才不会靠玄学。'}
@@ -3215,12 +3215,12 @@ function CompatibilityLabDialog({
             type="button"
             aria-label="关闭机型众测"
             onClick={() => onOpenChange(false)}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5 lg:h-9 lg:w-9"
           >
             <X size={17} />
           </button>
         </div>
-        <div className="min-h-0 overflow-y-auto p-3 lg:p-4">
+        <div className="min-h-0 overflow-y-auto p-2.5 lg:p-4">
           <CompatibilityLabPanel
             key={downloadContext?.downloadedAt ?? 'manual'}
             downloadContext={downloadContext}
@@ -3354,33 +3354,33 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
 
   return (
     <Panel title="机型众测" icon={<BadgeCheck size={18} />} compact>
-      <div className="grid min-w-0 gap-3">
+      <div className="grid min-w-0 gap-2 lg:gap-3">
         {downloadContext && (
-          <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-3">
-            <p className="text-xs font-black text-ink">下载已触发</p>
-            <p className="mt-1 break-all text-xs font-semibold leading-5 text-ink/65">
+          <div className="rounded-lg border-2 border-ink bg-[#d9f99d] p-2 lg:p-3">
+            <p className="text-[11px] font-black text-ink lg:text-xs">下载已触发</p>
+            <p className="mt-1 break-all text-[11px] font-semibold leading-4 text-ink/65 lg:text-xs lg:leading-5">
               {downloadContext.fileName} / {new Date(downloadContext.downloadedAt).toLocaleString('zh-CN')}
             </p>
           </div>
         )}
 
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 lg:grid-cols-3">
+        <div className="grid min-w-0 grid-cols-3 gap-1 lg:gap-2">
           <a
             href={sampleUrl ?? undefined}
             download={testKit?.fileName ?? 'motion-photo_MP.jpg'}
             aria-disabled={!sampleUrl}
             className={[
-              'inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 text-xs font-black shadow-clay-sm transition',
+              'inline-flex h-9 min-w-0 items-center justify-center gap-1 rounded-lg border-2 border-ink px-1.5 text-[11px] font-black shadow-clay-sm transition lg:h-10 lg:gap-2 lg:px-3 lg:text-xs',
               sampleUrl ? 'bg-[#ff715b] text-white hover:-translate-y-0.5' : 'pointer-events-none bg-ink/15 text-ink/40',
             ].join(' ')}
           >
-            <Download size={14} />
+            <Download size={13} />
             下载样本
           </a>
           <a
             href={toApiUrl('/api/compatibility/reports.csv')}
             download="vidlive-compatibility-reports.csv"
-            className="inline-flex h-10 min-w-0 items-center justify-center rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+            className="inline-flex h-9 min-w-0 items-center justify-center rounded-lg border-2 border-ink bg-white px-1.5 text-[11px] font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5 lg:h-10 lg:px-3 lg:text-xs"
           >
             CSV
           </a>
@@ -3389,13 +3389,13 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
             onClick={() => {
               void refresh();
             }}
-            className="inline-flex h-10 min-w-0 items-center justify-center rounded-lg border-2 border-ink bg-white px-3 text-xs font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+            className="inline-flex h-9 min-w-0 items-center justify-center rounded-lg border-2 border-ink bg-white px-1.5 text-[11px] font-black text-ink shadow-clay-sm transition hover:-translate-y-0.5 lg:h-10 lg:px-3 lg:text-xs"
           >
             刷新
           </button>
         </div>
 
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 lg:grid-cols-2">
+        <div className="grid min-w-0 grid-cols-2 gap-1.5 lg:gap-2">
           <CompatibilityTextInput
             label="品牌"
             value={form.deviceBrand}
@@ -3408,12 +3408,12 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
             placeholder="Mate / Reno"
             onChange={(value) => updateField('deviceModel', value)}
           />
-          <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
+          <label className="grid w-full min-w-0 max-w-full gap-1 text-[11px] font-black text-ink/60 lg:text-xs">
             系统
             <select
               value={form.osName}
               onChange={(event) => updateField('osName', event.target.value as CompatibilityOsName)}
-              className="h-10 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
+              className="box-border h-9 w-full min-w-0 max-w-full rounded-lg border-2 border-ink/15 bg-white px-1.5 text-xs font-black text-ink lg:h-10 lg:px-2 lg:text-sm"
             >
               <option value="Android">Android</option>
               <option value="HarmonyOS">HarmonyOS</option>
@@ -3432,12 +3432,12 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
             placeholder="Edge"
             onChange={(value) => updateField('browserName', value)}
           />
-          <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
+          <label className="grid w-full min-w-0 max-w-full gap-1 text-[11px] font-black text-ink/60 lg:text-xs">
             下载
             <select
               value={form.downloadResult}
               onChange={(event) => updateField('downloadResult', event.target.value as CompatibilityDownloadResult)}
-              className="h-10 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
+              className="box-border h-9 w-full min-w-0 max-w-full rounded-lg border-2 border-ink/15 bg-white px-1.5 text-xs font-black text-ink lg:h-10 lg:px-2 lg:text-sm"
             >
               <option value="success">成功</option>
               <option value="failed">失败</option>
@@ -3446,12 +3446,12 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
           </label>
         </div>
 
-        <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
+        <label className="grid w-full min-w-0 max-w-full gap-1 text-[11px] font-black text-ink/60 lg:text-xs">
           路径
           <select
             value={form.transferPath}
             onChange={(event) => updateField('transferPath', event.target.value as CompatibilityTransferPath)}
-            className="h-10 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink"
+            className="box-border h-9 w-full min-w-0 max-w-full rounded-lg border-2 border-ink/15 bg-white px-1.5 text-xs font-black text-ink lg:h-10 lg:px-2 lg:text-sm"
           >
             <option value="browser-direct">浏览器直下</option>
             <option value="usb">USB</option>
@@ -3464,9 +3464,9 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
 
         <div className="grid min-w-0 gap-2">
           {compatibilityViewerOptions.map((option) => (
-            <div key={option.id} className="min-w-0 rounded-lg border-2 border-ink/15 bg-white p-2">
-              <p className="mb-2 text-xs font-black text-ink">{option.label}</p>
-              <div className="grid min-w-0 grid-cols-2 gap-1 lg:grid-cols-4">
+            <div key={option.id} className="min-w-0 rounded-lg border-2 border-ink/15 bg-white p-1.5 lg:p-2">
+              <p className="mb-1.5 truncate text-[11px] font-black text-ink lg:mb-2 lg:text-xs">{option.label}</p>
+              <div className="grid min-w-0 grid-cols-4 gap-1">
                 {compatibilityOutcomeOptions.map((outcome) => {
                   const active = (form.viewers[option.id] ?? 'not-tested') === outcome.id;
 
@@ -3476,7 +3476,7 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
                       type="button"
                       onClick={() => updateViewer(option.id, outcome.id)}
                       className={[
-                        'h-8 min-w-0 rounded-md border px-1 text-[11px] font-black transition',
+                        'h-7 min-w-0 rounded-md border px-1 text-[10px] font-black transition lg:h-8 lg:text-[11px]',
                         active
                           ? 'border-ink bg-[#d9f99d] text-ink shadow-clay-sm'
                           : 'border-ink/15 bg-[#f7f2ea] text-ink/55 hover:border-ink',
@@ -3491,20 +3491,20 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
           ))}
         </div>
 
-        <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
+        <label className="grid w-full min-w-0 max-w-full gap-1 text-[11px] font-black text-ink/60 lg:text-xs">
           备注
           <textarea
             value={form.notes}
             maxLength={500}
             onChange={(event) => updateField('notes', event.target.value)}
-            className="min-h-16 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-3 py-2 text-sm font-semibold text-ink"
+            className="box-border min-h-14 w-full min-w-0 max-w-full rounded-lg border-2 border-ink/15 bg-white px-2 py-1.5 text-xs font-semibold text-ink lg:min-h-16 lg:px-3 lg:py-2 lg:text-sm"
           />
         </label>
 
         {validationErrors.length > 0 && (
-          <div role="alert" className="grid gap-2 rounded-lg border-2 border-ink bg-[#ffe2dc] p-3">
-            <p className="text-xs font-black text-ink">请先补充以下信息</p>
-            <ul className="grid gap-1 text-xs font-bold leading-5 text-ink/70">
+          <div role="alert" className="grid gap-1.5 rounded-lg border-2 border-ink bg-[#ffe2dc] p-2 lg:gap-2 lg:p-3">
+            <p className="text-[11px] font-black text-ink lg:text-xs">请先补充以下信息</p>
+            <ul className="grid gap-1 text-[11px] font-bold leading-4 text-ink/70 lg:text-xs lg:leading-5">
               {validationErrors.map((error) => (
                 <li key={error}>- {error}</li>
               ))}
@@ -3518,13 +3518,13 @@ function CompatibilityLabPanel({ downloadContext }: { downloadContext?: Compatib
           onClick={() => {
             void submitReport();
           }}
-          className="inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
+          className="inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-lg border-2 border-ink bg-[#23b7a4] px-3 text-xs font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40 lg:h-11 lg:gap-2 lg:px-4 lg:text-sm"
         >
           <ShieldCheck size={16} />
           提交结果
         </button>
 
-        {status && <p className="text-xs font-bold text-ink/60">{status}</p>}
+        {status && <p className="text-[11px] font-bold text-ink/60 lg:text-xs">{status}</p>}
       </div>
       <CompatibilitySubmitSuccessDialog open={isSubmitSuccessOpen} onOpenChange={setIsSubmitSuccessOpen} />
     </Panel>
@@ -3605,14 +3605,14 @@ function CompatibilityTextInput({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="grid min-w-0 gap-1 text-xs font-black text-ink/60">
+    <label className="grid w-full min-w-0 max-w-full gap-1 text-[11px] font-black text-ink/60 lg:text-xs">
       {label}
       <input
         type="text"
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 w-full min-w-0 rounded-lg border-2 border-ink/15 bg-white px-2 text-sm font-black text-ink placeholder:text-ink/30"
+        className="box-border h-9 w-full min-w-0 max-w-full rounded-lg border-2 border-ink/15 bg-white px-1.5 text-xs font-black text-ink placeholder:text-ink/30 lg:h-10 lg:px-2 lg:text-sm"
       />
     </label>
   );
@@ -3888,8 +3888,13 @@ function Panel({
   compact?: boolean;
 }) {
   return (
-    <section className={['clay-card min-w-0 bg-white', compact ? 'p-3 lg:p-4' : 'p-4'].join(' ')}>
-      <div className={['flex items-center gap-2 text-sm font-black text-ink', compact ? 'mb-2 lg:mb-3' : 'mb-3'].join(' ')}>
+    <section className={['clay-card min-w-0 bg-white', compact ? 'p-2.5 lg:p-4' : 'p-4'].join(' ')}>
+      <div
+        className={[
+          'flex items-center gap-2 font-black text-ink',
+          compact ? 'mb-2 text-xs lg:mb-3 lg:text-sm' : 'mb-3 text-sm',
+        ].join(' ')}
+      >
         <span className="text-[#ff715b]">{icon}</span>
         {title}
       </div>
