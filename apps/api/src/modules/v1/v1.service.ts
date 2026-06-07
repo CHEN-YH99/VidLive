@@ -1,12 +1,15 @@
-import { createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { resolve4, resolve6, resolveMx } from 'node:dns/promises';
 import { promisify } from 'node:util';
 import { V1AuthStore, type StoredUserRecord } from './v1.auth-store.js';
 
 const scryptAsync = promisify(scrypt);
-const tokenTtlMilliseconds = 7 * 24 * 60 * 60 * 1000;
+const tokenTtlMilliseconds = 3 * 24 * 60 * 60 * 1000;
 const maxFailedLoginAttempts = 5;
 const accountLockMilliseconds = 15 * 60 * 1000;
+const loginChallengeTtlMilliseconds = 5 * 60 * 1000;
+const loginChallengeDifficulty = 3;
+const loginChallengePrefix = '0'.repeat(loginChallengeDifficulty);
 const emailDomainLookupTimeoutMilliseconds = 3000;
 const emailDomainValidationCacheTtlMilliseconds = 15 * 60 * 1000;
 const freeDailyQuota = 5;
@@ -28,6 +31,15 @@ export interface V1UsageSummary {
   quotaLimit: number;
   usedToday: number;
   remainingToday: number;
+}
+
+export interface V1AuthChallenge {
+  id: string;
+  nonce: string;
+  algorithm: 'sha256-prefix-v1';
+  difficulty: number;
+  prefix: string;
+  expiresAt: string;
 }
 
 export interface KeyframeRecommendationInput {
@@ -112,6 +124,12 @@ interface ApiKeyRecord {
   lastUsedAt: string | null;
 }
 
+interface LoginChallengeRecord {
+  nonce: string;
+  prefix: string;
+  expiresAt: number;
+}
+
 export class V1Service {
   private readonly users = new Map<string, StoredUser>();
   private readonly usersByEmail = new Map<string, StoredUser>();
@@ -121,6 +139,7 @@ export class V1Service {
   private readonly batches = new Map<string, BatchJob>();
   private readonly experiments = new Map<string, ExperimentAssignment>();
   private readonly apiKeys = new Map<string, ApiKeyRecord>();
+  private readonly loginChallenges = new Map<string, LoginChallengeRecord>();
 
   private readonly permanentMemberEmails: Set<string>;
 
@@ -142,7 +161,30 @@ export class V1Service {
     return new V1Service(jwtSecret, authStore, permanentMemberEmails);
   }
 
-  async register(input: { email: string; password: string; username: string }): Promise<{ user: V1UserProfile; token: string }> {
+  createLoginChallenge(): V1AuthChallenge {
+    this.pruneExpiredLoginChallenges();
+
+    const id = randomUUID();
+    const expiresAt = Date.now() + loginChallengeTtlMilliseconds;
+    const challenge = {
+      nonce: randomBytes(16).toString('base64url'),
+      prefix: loginChallengePrefix,
+      expiresAt,
+    };
+
+    this.loginChallenges.set(id, challenge);
+
+    return {
+      id,
+      nonce: challenge.nonce,
+      algorithm: 'sha256-prefix-v1',
+      difficulty: loginChallengeDifficulty,
+      prefix: challenge.prefix,
+      expiresAt: new Date(expiresAt).toISOString(),
+    };
+  }
+
+  async register(input: { email: string; password: string; username: string }): Promise<{ user: V1UserProfile }> {
     const registration = validateRegistrationInput(input);
     await assertEmailDomainCanReceiveMail(registration.email);
     const existingEmail = this.authStore
@@ -188,12 +230,18 @@ export class V1Service {
 
     return {
       user: toPublicUser(entitledUser),
-      token: this.signToken(entitledUser),
     };
   }
 
-  async login(input: { email: string; password: string }): Promise<{ user: V1UserProfile; token: string }> {
+  async login(input: {
+    email: string;
+    password: string;
+    challengeId?: string;
+    challengeAnswer?: string;
+    automationTrap?: string;
+  }): Promise<{ user: V1UserProfile; token: string }> {
     const credentials = validateLoginInput(input);
+    this.verifyLoginChallenge(input);
     const storedUser = this.authStore
       ? await this.authStore.findUserByEmail(credentials.email)
       : this.usersByEmail.get(credentials.email) ?? null;
@@ -311,6 +359,48 @@ export class V1Service {
     this.cacheUser(nextUser);
 
     return nextUser;
+  }
+
+  private verifyLoginChallenge(input: {
+    challengeId?: string;
+    challengeAnswer?: string;
+    automationTrap?: string;
+  }): void {
+    if (input.automationTrap?.trim()) {
+      throw new V1Error('auth-challenge-failed', '登录校验失败，请重试。');
+    }
+
+    const challengeId = input.challengeId?.trim();
+    const challengeAnswer = input.challengeAnswer?.trim();
+
+    if (!challengeId || !challengeAnswer) {
+      throw new V1Error('auth-challenge-required', '请完成人机验证后再登录。');
+    }
+
+    const challenge = this.loginChallenges.get(challengeId);
+    this.loginChallenges.delete(challengeId);
+
+    if (!challenge || challenge.expiresAt < Date.now() || !/^\d{1,10}$/u.test(challengeAnswer)) {
+      throw new V1Error('auth-challenge-failed', '登录校验失败，请重试。');
+    }
+
+    const digest = createHash('sha256')
+      .update(`${challengeId}:${challenge.nonce}:${challengeAnswer}`)
+      .digest('hex');
+
+    if (!digest.startsWith(challenge.prefix)) {
+      throw new V1Error('auth-challenge-failed', '登录校验失败，请重试。');
+    }
+  }
+
+  private pruneExpiredLoginChallenges(): void {
+    const now = Date.now();
+
+    for (const [id, challenge] of this.loginChallenges.entries()) {
+      if (challenge.expiresAt <= now) {
+        this.loginChallenges.delete(id);
+      }
+    }
   }
 
   getUsage(userId: string): V1UsageSummary {

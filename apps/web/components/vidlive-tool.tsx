@@ -2638,6 +2638,15 @@ interface PasswordRuleState {
   passed: boolean;
 }
 
+interface AuthChallenge {
+  id: string;
+  nonce: string;
+  algorithm: 'sha256-prefix-v1';
+  difficulty: number;
+  prefix: string;
+  expiresAt: string;
+}
+
 function validateAuthForm(mode: AuthMode, email: string, username: string, password: string): AuthFieldErrors {
   const errors: AuthFieldErrors = {};
   const normalizedEmail = email.trim().toLowerCase();
@@ -2740,6 +2749,42 @@ function isValidAuthEmailDomain(domain: string): boolean {
   });
 }
 
+async function createLoginChallengeProof(): Promise<{ challengeId: string; challengeAnswer: string }> {
+  const response = await fetch(toApiUrl('/api/v1/auth/challenge'), {
+    cache: 'no-store',
+    credentials: 'include',
+  });
+  const challenge = (await response.json().catch(() => null)) as AuthChallenge | null;
+
+  if (!response.ok || !challenge || challenge.algorithm !== 'sha256-prefix-v1') {
+    throw new Error('auth-challenge-failed');
+  }
+
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('auth-challenge-unsupported');
+  }
+
+  for (let answer = 0; answer <= 10_000_000; answer += 1) {
+    const digest = await hashLoginChallenge(challenge.id, challenge.nonce, answer.toString());
+
+    if (digest.startsWith(challenge.prefix)) {
+      return {
+        challengeId: challenge.id,
+        challengeAnswer: answer.toString(),
+      };
+    }
+  }
+
+  throw new Error('auth-challenge-timeout');
+}
+
+async function hashLoginChallenge(challengeId: string, nonce: string, answer: string): Promise<string> {
+  const data = new TextEncoder().encode(`${challengeId}:${nonce}:${answer}`);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', data);
+
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
 function AuthDialog({
   open,
   onOpenChange,
@@ -2753,6 +2798,8 @@ function AuthDialog({
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberLogin, setRememberLogin] = useState(false);
+  const [automationTrap, setAutomationTrap] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fieldErrors = useMemo(() => validateAuthForm(mode, email, username, password), [email, mode, password, username]);
@@ -2794,6 +2841,8 @@ function AuthDialog({
     setStatus(null);
 
     try {
+      const normalizedEmail = email.trim().toLowerCase();
+      const challengeProof = mode === 'login' ? await createLoginChallengeProof() : null;
       const response = await fetch(toApiUrl(mode === 'register' ? '/api/v1/auth/register' : '/api/v1/auth/login'), {
         method: 'POST',
         credentials: 'include',
@@ -2801,17 +2850,36 @@ function AuthDialog({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          email: email.trim(),
+          email: normalizedEmail,
           password,
           username: mode === 'register' ? username.trim() : undefined,
+          remember: mode === 'login' ? rememberLogin : undefined,
+          challengeId: challengeProof?.challengeId,
+          challengeAnswer: challengeProof?.challengeAnswer,
+          automationTrap,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
         | { user?: AuthUser; token?: string; message?: string }
         | null;
 
-      if (!response.ok || !payload?.user || !payload.token) {
+      if (!response.ok || !payload?.user) {
         setStatus(payload?.message ?? '账号请求失败');
+        return;
+      }
+
+      if (mode === 'register') {
+        setMode('login');
+        setEmail(payload.user.email || normalizedEmail);
+        setUsername('');
+        setPassword('');
+        setAutomationTrap('');
+        setStatus('注册成功，请登录。');
+        return;
+      }
+
+      if (!payload.token) {
+        setStatus('账号请求失败');
         return;
       }
 
@@ -2820,8 +2888,8 @@ function AuthDialog({
         token: payload.token,
       });
       setPassword('');
-    } catch {
-      setStatus('账号服务不可用');
+    } catch (error) {
+      setStatus(error instanceof Error && error.message === 'auth-challenge-unsupported' ? '当前浏览器不支持登录校验。' : '账号服务不可用');
     } finally {
       setIsSubmitting(false);
     }
@@ -2906,6 +2974,18 @@ function AuthDialog({
               maxLength={128}
               onChange={setPassword}
             />
+            <div aria-hidden="true" className="hidden">
+              <label>
+                公司网址
+                <input
+                  type="text"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  value={automationTrap}
+                  onChange={(event) => setAutomationTrap(event.target.value)}
+                />
+              </label>
+            </div>
 
             {mode === 'register' && (
               <div className="grid gap-1 rounded-lg border-2 border-ink/10 bg-white/70 p-3">
@@ -2919,6 +2999,18 @@ function AuthDialog({
                   </p>
                 ))}
               </div>
+            )}
+
+            {mode === 'login' && (
+              <label className="inline-flex items-center gap-2 text-xs font-black text-ink/65">
+                <input
+                  type="checkbox"
+                  checked={rememberLogin}
+                  onChange={(event) => setRememberLogin(event.target.checked)}
+                  className="h-4 w-4 accent-[#23b7a4]"
+                />
+                记住密码 3 天
+              </label>
             )}
 
             <button

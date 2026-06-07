@@ -1,4 +1,5 @@
 /* global console, fetch, process, setTimeout */
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -34,7 +35,13 @@ async function main() {
       username: 'phase5-smoke',
       password: 'VidLive-Smoke-2026!',
     });
-    const token = register.token;
+    assert(register.user?.email === email, 'register did not return user');
+    const login = await postJson('/api/v1/auth/login', await createLoginPayload({
+      email,
+      password: 'VidLive-Smoke-2026!',
+    }));
+    const token = login.token;
+    assert(token, 'login did not return token');
     const intent = await postJson('/api/v1/billing/checkout-intents', {}, token);
     await postJson(`/api/v1/billing/checkout-intents/${intent.id}/confirm`, {}, token);
 
@@ -115,6 +122,29 @@ async function getJson(route, token) {
   }
 
   return payload;
+}
+
+async function createLoginPayload(body) {
+  const challenge = await getJson('/api/v1/auth/challenge');
+
+  return {
+    ...body,
+    challengeId: challenge.id,
+    challengeAnswer: solveChallenge(challenge),
+  };
+}
+
+function solveChallenge(challenge) {
+  for (let answer = 0; answer <= 10_000_000; answer += 1) {
+    const value = answer.toString();
+    const digest = createHash('sha256').update(`${challenge.id}:${challenge.nonce}:${value}`).digest('hex');
+
+    if (digest.startsWith(challenge.prefix)) {
+      return value;
+    }
+  }
+
+  throw new Error('Failed to solve auth challenge.');
 }
 
 function authHeaders(token) {

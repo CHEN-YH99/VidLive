@@ -3,11 +3,16 @@ import type { AppConfig } from '../../config/env.js';
 import { V1Error, V1Service } from './v1.service.js';
 
 const authCookieName = 'vidlive_session';
+const rememberedAuthCookieMaxAgeSeconds = 3 * 24 * 60 * 60;
 
 interface AuthBody {
   email?: string;
   password?: string;
   username?: string;
+  remember?: boolean;
+  challengeId?: string;
+  challengeAnswer?: string;
+  automationTrap?: string;
 }
 
 interface KeyframeBody {
@@ -54,17 +59,17 @@ interface ToolParams {
 export async function registerV1Routes(server: FastifyInstance, config: AppConfig): Promise<void> {
   const service = await V1Service.create(config.jwtSecret, config.databaseUrl, config.permanentMemberEmails);
 
+  server.get('/api/v1/auth/challenge', async () => {
+    return service.createLoginChallenge();
+  });
+
   server.post<{ Body: AuthBody }>('/api/v1/auth/register', async (request, reply) => {
     try {
-      const session = await service.register({
+      return await service.register({
         email: request.body.email ?? '',
         password: request.body.password ?? '',
         username: request.body.username ?? '',
       });
-
-      setAuthCookie(reply, session.token, config.authCookieSecure);
-
-      return session;
     } catch (error) {
       return sendV1Error(reply, error);
     }
@@ -72,12 +77,37 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
 
   server.post<{ Body: AuthBody }>('/api/v1/auth/login', async (request, reply) => {
     try {
-      const session = await service.login({
+      const loginInput: {
+        email: string;
+        password: string;
+        challengeId?: string;
+        challengeAnswer?: string;
+        automationTrap?: string;
+      } = {
         email: request.body.email ?? '',
         password: request.body.password ?? '',
-      });
+      };
 
-      setAuthCookie(reply, session.token, config.authCookieSecure);
+      if (request.body.challengeId !== undefined) {
+        loginInput.challengeId = request.body.challengeId;
+      }
+
+      if (request.body.challengeAnswer !== undefined) {
+        loginInput.challengeAnswer = request.body.challengeAnswer;
+      }
+
+      if (request.body.automationTrap !== undefined) {
+        loginInput.automationTrap = request.body.automationTrap;
+      }
+
+      const session = await service.login(loginInput);
+
+      setAuthCookie(
+        reply,
+        session.token,
+        config.authCookieSecure,
+        request.body.remember === true ? rememberedAuthCookieMaxAgeSeconds : null,
+      );
 
       return session;
     } catch (error) {
@@ -383,21 +413,21 @@ function sendV1Error(reply: { status: (statusCode: number) => { send: (payload: 
   throw error;
 }
 
-function setAuthCookie(reply: FastifyReply, token: string, secure: boolean): void {
-  reply.header('Set-Cookie', serializeAuthCookie(`${authCookieName}=${encodeURIComponent(token)}`, secure, 7 * 24 * 60 * 60));
+function setAuthCookie(reply: FastifyReply, token: string, secure: boolean, maxAgeSeconds: number | null): void {
+  reply.header('Set-Cookie', serializeAuthCookie(`${authCookieName}=${encodeURIComponent(token)}`, secure, maxAgeSeconds));
 }
 
 function clearAuthCookie(reply: FastifyReply, secure: boolean): void {
   reply.header('Set-Cookie', serializeAuthCookie(`${authCookieName}=`, secure, 0));
 }
 
-function serializeAuthCookie(prefix: string, secure: boolean, maxAgeSeconds: number): string {
+function serializeAuthCookie(prefix: string, secure: boolean, maxAgeSeconds: number | null): string {
   return [
     prefix,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
-    `Max-Age=${maxAgeSeconds}`,
+    maxAgeSeconds === null ? '' : `Max-Age=${maxAgeSeconds}`,
     secure ? 'Secure' : '',
   ]
     .filter(Boolean)
