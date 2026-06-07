@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  ArrowLeft,
   BadgeCheck,
   CheckCircle2,
   Clock3,
@@ -34,6 +35,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type FormEvent,
@@ -132,6 +134,7 @@ const presetHelpText: Record<ExportPresetId, string> = {
 type CloudJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
 type GenerationStatus = 'generating' | 'complete' | 'failed';
 type AuthMode = 'login' | 'register' | 'reset-password';
+type AuthLoginStep = 'email' | 'password';
 
 interface CloudJob {
   id: string;
@@ -2738,6 +2741,27 @@ interface AuthLoginEmailCodeRequiredResponse {
   message?: string;
 }
 
+interface AuthFormValues {
+  email: string;
+  username: string;
+  password: string;
+  emailCode: string;
+  automationTrap: string;
+}
+
+function readAuthFormValues(form: HTMLFormElement): AuthFormValues {
+  const formData = new FormData(form);
+  const getValue = (name: string) => String(formData.get(name) ?? '');
+
+  return {
+    email: getValue('email'),
+    username: getValue('display-name'),
+    password: getValue('current-password') || getValue('new-password') || getValue('password'),
+    emailCode: getValue('one-time-code').replace(/\D/gu, '').slice(0, 6),
+    automationTrap: getValue('company-url'),
+  };
+}
+
 function validateAuthForm(mode: AuthMode, email: string, username: string, password: string, emailCode: string, requireEmailCode: boolean): AuthFieldErrors {
   const errors: AuthFieldErrors = {};
   const normalizedEmail = email.trim().toLowerCase();
@@ -2766,6 +2790,17 @@ function validateAuthForm(mode: AuthMode, email: string, username: string, passw
 
   if (requireEmailCode && !/^\d{6}$/u.test(emailCode.trim())) {
     errors.emailCode = '请输入 6 位邮箱验证码。';
+  }
+
+  return errors;
+}
+
+function validateAuthLoginEmailStep(email: string): AuthFieldErrors {
+  const errors: AuthFieldErrors = {};
+  const normalizedEmail = email.trim().toLowerCase();
+
+  if (!isValidAuthEmail(normalizedEmail)) {
+    errors.email = '请输入有效邮箱。';
   }
 
   return errors;
@@ -2915,23 +2950,45 @@ function AuthDialog({
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [emailCode, setEmailCode] = useState('');
   const [loginEmailTicket, setLoginEmailTicket] = useState<AuthLoginEmailTicket | null>(null);
+  const [loginStep, setLoginStep] = useState<AuthLoginStep>('email');
   const [rememberLogin, setRememberLogin] = useState(false);
   const [automationTrap, setAutomationTrap] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingEmailCode, setIsSendingEmailCode] = useState(false);
   const [emailCodeCooldown, setEmailCodeCooldown] = useState(0);
+  const authFormRef = useRef<HTMLFormElement | null>(null);
   const requiresEmailCode = mode !== 'login' || Boolean(loginEmailTicket);
+  const isLoginEmailStep = mode === 'login' && !loginEmailTicket && loginStep === 'email';
+  const isLoginPasswordStep = mode === 'login' && !loginEmailTicket && loginStep === 'password';
+  const shouldShowPasswordField = !loginEmailTicket && (mode !== 'login' || isLoginPasswordStep);
   const fieldErrors = useMemo(
-    () => validateAuthForm(mode, email, username, password, emailCode, requiresEmailCode),
-    [email, emailCode, mode, password, requiresEmailCode, username],
+    () => (isLoginEmailStep ? validateAuthLoginEmailStep(email) : validateAuthForm(mode, email, username, password, emailCode, requiresEmailCode)),
+    [email, emailCode, isLoginEmailStep, mode, password, requiresEmailCode, username],
   );
   const passwordRules = useMemo(
     () => getPasswordRules(password, email.trim().toLowerCase(), mode === 'register' ? username.trim() : ''),
     [email, mode, password, username],
   );
   const isEmailCodeComplete = /^\d{6}$/u.test(emailCode.trim());
-  const canSubmit = Object.keys(fieldErrors).length === 0;
+  const authModeItems: AuthMode[] = ['login', 'register', 'reset-password'];
+  const authFormKind = loginEmailTicket ? 'login-code' : mode === 'login' ? `login-${loginStep}` : mode;
+  const authFormId = `vidlive-auth-${authFormKind}`;
+  const displayNameFieldId = 'display-name';
+  const passwordFieldId = mode === 'login' ? 'current-password' : 'new-password';
+  const passwordFieldName = mode === 'login' ? 'current-password' : 'new-password';
+  const passwordAutocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  const emailFieldId = 'email';
+  const emailCodeFieldId = 'one-time-code';
+  const submitLabel = loginEmailTicket
+    ? '验证并登录'
+    : mode === 'login'
+      ? isLoginEmailStep
+        ? '下一步'
+        : '进入账号'
+      : mode === 'register'
+        ? '创建账号'
+        : '重置密码';
   const resetAuthTransientState = useCallback((clearPassword = false) => {
     setEmailCode('');
     setLoginEmailTicket(null);
@@ -2941,6 +2998,7 @@ function AuthDialog({
     setIsSendingEmailCode(false);
 
     if (clearPassword) {
+      setLoginStep('email');
       setPassword('');
       setIsPasswordVisible(false);
     }
@@ -2950,6 +3008,35 @@ function AuthDialog({
     setAutomationTrap('');
     onOpenChange(false);
   }, [onOpenChange, resetAuthTransientState]);
+  const syncAuthFormValuesFromDom = useCallback(() => {
+    const form = authFormRef.current;
+
+    if (!form) {
+      return;
+    }
+
+    const values = readAuthFormValues(form);
+
+    if (values.email) {
+      setEmail((current) => (current === values.email ? current : values.email));
+    }
+
+    if (mode === 'register' && values.username) {
+      setUsername((current) => (current === values.username ? current : values.username));
+    }
+
+    if (!loginEmailTicket && values.password) {
+      setPassword((current) => (current === values.password ? current : values.password));
+    }
+
+    if (values.emailCode) {
+      setEmailCode((current) => (current === values.emailCode ? current : values.emailCode));
+    }
+
+    if (values.automationTrap) {
+      setAutomationTrap((current) => (current === values.automationTrap ? current : values.automationTrap));
+    }
+  }, [loginEmailTicket, mode]);
 
   useEffect(() => {
     if (!open) {
@@ -2968,6 +3055,20 @@ function AuthDialog({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [closeAuthDialog, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const firstTimerId = window.setTimeout(syncAuthFormValuesFromDom, 120);
+    const secondTimerId = window.setTimeout(syncAuthFormValuesFromDom, 600);
+
+    return () => {
+      window.clearTimeout(firstTimerId);
+      window.clearTimeout(secondTimerId);
+    };
+  }, [authFormId, open, syncAuthFormValuesFromDom]);
 
   useEffect(() => {
     if (emailCodeCooldown <= 0) {
@@ -2993,6 +3094,11 @@ function AuthDialog({
     setAutomationTrap('');
   };
 
+  const returnToLoginEmailStep = () => {
+    setLoginStep('email');
+    resetAuthTransientState(true);
+  };
+
   const handleEmailChange = (value: string) => {
     setEmail(value);
     setEmailCode('');
@@ -3009,7 +3115,17 @@ function AuthDialog({
       return;
     }
 
-    const nextErrors = validateAuthEmailCodeRequest(mode, email, username);
+    const formValues = authFormRef.current
+      ? readAuthFormValues(authFormRef.current)
+      : { email, username, password, emailCode, automationTrap };
+    const submittedEmail = formValues.email;
+    const submittedUsername = formValues.username;
+    const nextErrors = validateAuthEmailCodeRequest(mode, submittedEmail, submittedUsername);
+
+    setEmail(submittedEmail);
+    setUsername(submittedUsername);
+    setPassword(formValues.password);
+    setAutomationTrap(formValues.automationTrap);
 
     if (Object.keys(nextErrors).length > 0) {
       setStatus(Object.values(nextErrors)[0] ?? '请检查表单。');
@@ -3020,7 +3136,7 @@ function AuthDialog({
     setStatus(null);
 
     try {
-      const normalizedEmail = email.trim().toLowerCase();
+      const normalizedEmail = submittedEmail.trim().toLowerCase();
       const requestBody: {
         email: string;
         purpose: 'register' | 'reset-password';
@@ -3031,7 +3147,7 @@ function AuthDialog({
       };
 
       if (mode === 'register') {
-        requestBody.username = username.trim();
+        requestBody.username = submittedUsername.trim();
       }
 
       const response = await fetch(toApiUrl('/api/v1/auth/email-codes'), {
@@ -3062,7 +3178,36 @@ function AuthDialog({
 
   const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const nextErrors = validateAuthForm(mode, email, username, password, emailCode, requiresEmailCode);
+    const formValues = readAuthFormValues(event.currentTarget);
+    const submittedEmail = formValues.email;
+    const submittedUsername = formValues.username;
+    const submittedPassword = loginEmailTicket ? '' : formValues.password;
+    const submittedEmailCode = formValues.emailCode;
+    const submittedAutomationTrap = formValues.automationTrap;
+
+    setEmail(submittedEmail);
+    setUsername(submittedUsername);
+    setPassword(submittedPassword);
+    setEmailCode(submittedEmailCode);
+    setAutomationTrap(submittedAutomationTrap);
+
+    if (isLoginEmailStep) {
+      const nextErrors = validateAuthLoginEmailStep(submittedEmail);
+
+      if (Object.keys(nextErrors).length > 0) {
+        setStatus(Object.values(nextErrors)[0] ?? '请检查表单。');
+        return;
+      }
+
+      setEmail(submittedEmail.trim().toLowerCase());
+      setPassword('');
+      setIsPasswordVisible(false);
+      setStatus(null);
+      setLoginStep('password');
+      return;
+    }
+
+    const nextErrors = validateAuthForm(mode, submittedEmail, submittedUsername, submittedPassword, submittedEmailCode, requiresEmailCode);
 
     if (Object.keys(nextErrors).length > 0) {
       setStatus(Object.values(nextErrors)[0] ?? '请检查表单。');
@@ -3073,8 +3218,8 @@ function AuthDialog({
     setStatus(null);
 
     try {
-      const normalizedEmail = email.trim().toLowerCase();
-      const trimmedEmailCode = emailCode.trim();
+      const normalizedEmail = submittedEmail.trim().toLowerCase();
+      const trimmedEmailCode = submittedEmailCode.trim();
 
       if (loginEmailTicket) {
         const response = await fetch(toApiUrl('/api/v1/auth/login/email-code'), {
@@ -3114,7 +3259,7 @@ function AuthDialog({
           },
           body: JSON.stringify({
             email: normalizedEmail,
-            password,
+            password: submittedPassword,
             emailCode: trimmedEmailCode,
           }),
         });
@@ -3126,6 +3271,7 @@ function AuthDialog({
         }
 
         setMode('login');
+        setLoginStep('email');
         setPassword('');
         setIsPasswordVisible(false);
         setEmailCode('');
@@ -3146,11 +3292,11 @@ function AuthDialog({
         automationTrap?: string;
       } = {
         email: normalizedEmail,
-        password,
+        password: submittedPassword,
       };
 
       if (mode === 'register') {
-        authRequestBody.username = username.trim();
+        authRequestBody.username = submittedUsername.trim();
         authRequestBody.emailCode = trimmedEmailCode;
       }
 
@@ -3163,8 +3309,8 @@ function AuthDialog({
         authRequestBody.challengeAnswer = challengeProof.challengeAnswer;
       }
 
-      if (automationTrap) {
-        authRequestBody.automationTrap = automationTrap;
+      if (submittedAutomationTrap) {
+        authRequestBody.automationTrap = submittedAutomationTrap;
       }
 
       const response = await fetch(toApiUrl(mode === 'register' ? '/api/v1/auth/register' : '/api/v1/auth/login'), {
@@ -3206,6 +3352,7 @@ function AuthDialog({
 
       if (mode === 'register') {
         setMode('login');
+        setLoginStep('email');
         setEmail(payload.user.email || normalizedEmail);
         setUsername('');
         setPassword('');
@@ -3232,24 +3379,6 @@ function AuthDialog({
       setIsSubmitting(false);
     }
   };
-
-  const authModeItems: AuthMode[] = ['login', 'register', 'reset-password'];
-  const authFormKind = loginEmailTicket ? 'login-code' : mode;
-  const authAutocompleteKind = authFormKind.replace(/-/gu, '');
-  const authFormId = `vidlive-auth-${authFormKind}`;
-  const authAutocompleteSection = `section-vidliveauth${authAutocompleteKind}`;
-  const displayNameFieldId = `${authFormId}-display-name`;
-  const passwordFieldId = mode === 'login' ? 'current-password' : 'new-password';
-  const passwordAutocomplete = `${authAutocompleteSection} ${mode === 'login' ? 'current-password' : 'new-password'}`;
-  const emailFieldId = `${authFormId}-email`;
-  const emailCodeFieldId = `${authFormId}-email-code`;
-  const submitLabel = loginEmailTicket
-    ? '验证并登录'
-    : mode === 'login'
-      ? '进入账号'
-      : mode === 'register'
-        ? '创建账号'
-        : '重置密码';
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-3 sm:items-center sm:p-5">
@@ -3294,7 +3423,7 @@ function AuthDialog({
             ))}
           </div>
 
-          <form key={authFormId} id={authFormId} onSubmit={submitAuth} autoComplete="on" className="grid gap-3">
+          <form ref={authFormRef} key={authFormId} id={authFormId} onSubmit={submitAuth} autoComplete="on" className="grid gap-3">
             {mode === 'register' && (
               <AuthTextField
                 id={displayNameFieldId}
@@ -3309,23 +3438,50 @@ function AuthDialog({
                 onChange={setUsername}
               />
             )}
-            <AuthTextField
-              id={emailFieldId}
-              name="email"
-              label="邮箱"
-              value={email}
-              type="email"
-              autoComplete={`${authAutocompleteSection} username`}
-              inputMode="email"
-              placeholder="you@example.com"
-              error={fieldErrors.email}
-              maxLength={254}
-              onChange={handleEmailChange}
-            />
-            {!loginEmailTicket && (
+            {isLoginPasswordStep ? (
+              <div className="grid grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-2">
+                <button
+                  type="button"
+                  aria-label="返回邮箱输入"
+                  onClick={returnToLoginEmailStep}
+                  className="mt-5 inline-flex h-11 w-11 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#23b7a4]"
+                >
+                  <ArrowLeft size={17} />
+                </button>
+                <AuthTextField
+                  id={emailFieldId}
+                  name="email"
+                  label="邮箱"
+                  value={email}
+                  type="email"
+                  autoComplete="username"
+                  inputMode="email"
+                  placeholder="you@example.com"
+                  error={fieldErrors.email}
+                  maxLength={254}
+                  readOnly
+                  onChange={handleEmailChange}
+                />
+              </div>
+            ) : (
+              <AuthTextField
+                id={emailFieldId}
+                name="email"
+                label="邮箱"
+                value={email}
+                type="email"
+                autoComplete="username"
+                inputMode="email"
+                placeholder="you@example.com"
+                error={fieldErrors.email}
+                maxLength={254}
+                onChange={handleEmailChange}
+              />
+            )}
+            {shouldShowPasswordField && (
               <AuthPasswordField
                 id={passwordFieldId}
-                name={mode === 'login' ? 'current-password' : 'new-password'}
+                name={passwordFieldName}
                 label={mode === 'reset-password' ? '新密码' : '密码'}
                 value={password}
                 autoComplete={passwordAutocomplete}
@@ -3375,13 +3531,14 @@ function AuthDialog({
                       name="one-time-code"
                       type="text"
                       value={emailCode}
-                      autoComplete={`${authAutocompleteSection} one-time-code`}
+                      autoComplete="one-time-code"
                       inputMode="numeric"
                       pattern="[0-9]*"
                       placeholder="6 位数字"
                       maxLength={6}
                       aria-invalid={Boolean(fieldErrors.emailCode)}
-                      onChange={(event) => setEmailCode(event.target.value.replace(/\D/gu, '').slice(0, 6))}
+                      onInput={(event) => setEmailCode(event.currentTarget.value.replace(/\D/gu, '').slice(0, 6))}
+                      onChange={(event) => setEmailCode(event.currentTarget.value.replace(/\D/gu, '').slice(0, 6))}
                       className={[
                         'h-11 rounded-lg border-2 bg-white px-3 text-sm font-black text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2',
                         fieldErrors.emailCode
@@ -3416,7 +3573,7 @@ function AuthDialog({
               </div>
             )}
 
-            {mode === 'login' && !loginEmailTicket && (
+            {isLoginPasswordStep && (
               <label className="inline-flex items-center gap-2 text-xs font-black text-ink/65">
                 <input
                   type="checkbox"
@@ -3430,7 +3587,7 @@ function AuthDialog({
 
             <button
               type="submit"
-              disabled={isSubmitting || !canSubmit}
+              disabled={isSubmitting}
               className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
             >
               {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <UserRound size={16} />}
@@ -3456,6 +3613,7 @@ function AuthTextField({
   placeholder,
   error,
   maxLength,
+  readOnly = false,
   onChange,
 }: {
   id: string;
@@ -3468,6 +3626,7 @@ function AuthTextField({
   placeholder: string;
   error?: string | undefined;
   maxLength?: number;
+  readOnly?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
@@ -3482,8 +3641,18 @@ function AuthTextField({
         inputMode={inputMode}
         placeholder={placeholder}
         maxLength={maxLength}
+        readOnly={readOnly}
         aria-invalid={Boolean(error)}
-        onChange={(event) => onChange(event.target.value)}
+        onInput={(event) => {
+          if (!readOnly) {
+            onChange(event.currentTarget.value);
+          }
+        }}
+        onChange={(event) => {
+          if (!readOnly) {
+            onChange(event.currentTarget.value);
+          }
+        }}
         className={[
           'h-11 rounded-lg border-2 bg-white px-3 text-sm font-black text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2',
           error ? 'border-[#ff715b] focus:border-[#ff715b] focus:ring-[#ff715b]/30' : 'border-ink/15 focus:border-ink focus:ring-[#23b7a4]',
@@ -3532,7 +3701,8 @@ function AuthPasswordField({
           placeholder={placeholder}
           maxLength={maxLength}
           aria-invalid={Boolean(error)}
-          onChange={(event) => onChange(event.target.value)}
+          onInput={(event) => onChange(event.currentTarget.value)}
+          onChange={(event) => onChange(event.currentTarget.value)}
           className={[
             'h-11 w-full rounded-lg border-2 bg-white px-3 pr-11 text-sm font-black text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2',
             error ? 'border-[#ff715b] focus:border-[#ff715b] focus:ring-[#ff715b]/30' : 'border-ink/15 focus:border-ink focus:ring-[#23b7a4]',
