@@ -593,6 +593,24 @@ function formatPlanBadge(user: AuthUser): string {
   return user.dailyQuota < 0 ? '永久' : user.planType;
 }
 
+function formatUserQuota(user: AuthUser): string {
+  return user.dailyQuota < 0 ? '无限' : `${user.dailyQuota} 次/日`;
+}
+
+function formatUserCreatedDate(user: AuthUser): string {
+  const createdDate = new Date(user.createdAt);
+
+  if (Number.isNaN(createdDate.getTime())) {
+    return '-';
+  }
+
+  return createdDate.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+}
+
 function createCloudQuery(draft: ConversionDraft): string {
   const query = new URLSearchParams({
     presetId: draft.presetId,
@@ -2490,28 +2508,62 @@ function AuthEntryButton({
 }) {
   if (session) {
     const initials = getUserInitials(session.user.username);
+    const planLabel = formatPlanLabel(session);
+    const quotaLabel = formatUserQuota(session.user);
+    const createdDateLabel = formatUserCreatedDate(session.user);
 
     return (
-      <div className="inline-flex h-9 overflow-hidden rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm">
-        <button
-          type="button"
-          title={session.user.email}
-          onClick={onOpen}
-          className="inline-flex min-w-0 items-center gap-2 px-2 text-xs font-black transition hover:bg-[#e4f7ff] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#23b7a4]"
-        >
-          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-ink/15 bg-[#d9f99d] text-[10px]">
-            {initials}
-          </span>
-          <span className="hidden max-w-20 truncate sm:inline">{session.user.username}</span>
-          <span className="rounded-md bg-[#e4f7ff] px-1.5 py-0.5 text-[10px] uppercase text-ink/70">
-            {formatPlanBadge(session.user)}
-          </span>
-        </button>
+      <div className="relative z-50 inline-flex h-9 rounded-lg text-ink shadow-clay-sm">
+        <div className="group/account relative inline-flex h-9 focus-within:z-[70]">
+          <div
+            tabIndex={0}
+            title={session.user.email}
+            aria-describedby="auth-account-popover"
+            className="inline-flex min-w-0 items-center gap-2 rounded-l-lg border-2 border-r-0 border-ink bg-white px-2 text-xs font-black outline-none transition hover:bg-[#e4f7ff] focus:bg-[#e4f7ff] focus:ring-2 focus:ring-inset focus:ring-[#23b7a4]"
+          >
+            <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-ink/15 bg-[#d9f99d] text-[10px]">
+              {initials}
+            </span>
+            <span className="hidden max-w-20 truncate sm:inline">{session.user.username}</span>
+            <span className="rounded-md bg-[#e4f7ff] px-1.5 py-0.5 text-[10px] uppercase text-ink/70">
+              {formatPlanBadge(session.user)}
+            </span>
+          </div>
+
+          <div
+            id="auth-account-popover"
+            className="pointer-events-none absolute right-0 top-full z-[90] mt-2 hidden w-72 max-w-[calc(100vw-1rem)] rounded-lg border-2 border-ink bg-white p-3 text-xs text-ink shadow-clay-sm group-hover/account:block group-focus-within/account:block"
+          >
+            <div className="flex items-start gap-3 border-b border-ink/10 pb-3">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-[#d9f99d] text-sm font-black shadow-clay-sm">
+                {initials}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-black">{session.user.username}</p>
+                <p className="mt-1 truncate font-semibold text-ink/60">{session.user.email}</p>
+              </div>
+            </div>
+            <dl className="mt-3 grid gap-2">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="font-black text-ink/45">当前套餐</dt>
+                <dd className="min-w-0 truncate font-black">{planLabel}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="font-black text-ink/45">每日额度</dt>
+                <dd className="min-w-0 truncate font-black">{quotaLabel}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="font-black text-ink/45">注册时间</dt>
+                <dd className="min-w-0 truncate font-black">{createdDateLabel}</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
         <button
           type="button"
           aria-label="退出登录"
           onClick={onLogout}
-          className="inline-flex w-8 items-center justify-center border-l-2 border-ink text-ink/70 transition hover:bg-[#ffe2dc] hover:text-ink"
+          className="inline-flex w-8 items-center justify-center rounded-r-lg border-2 border-ink bg-white text-ink/70 transition hover:bg-[#ffe2dc] hover:text-ink"
         >
           <LogOut size={14} />
         </button>
