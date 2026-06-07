@@ -138,7 +138,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
@@ -154,7 +154,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
@@ -167,7 +167,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
@@ -228,7 +228,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     return {
       plans: service.getPlans(),
       provider: 'mock-stripe',
-      note: 'Use a real Stripe provider before production charging.',
+      note: '当前为 VidLive 内置支付流程模拟器，生产收费前需接入正式支付渠道。',
     };
   });
 
@@ -238,7 +238,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
@@ -259,7 +259,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
@@ -274,7 +274,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
@@ -295,7 +295,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!batch) {
       return reply.status(404).send({
         code: 'batch-not-found',
-        message: 'Batch was not found.',
+        message: '未找到对应的批量导出任务。',
       });
     }
 
@@ -308,7 +308,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
@@ -335,7 +335,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
@@ -358,7 +358,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
@@ -373,11 +373,11 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     if (!user) {
       return reply.status(401).send({
         code: 'unauthorized',
-        message: 'Bearer token is required.',
+        message: '请登录后再访问该 VidLive 接口。',
       });
     }
 
-    return service.createApiKey(user.id, request.body.label ?? 'Default API key');
+    return service.createApiKey(user.id, request.body.label ?? 'VidLive API 密钥');
   });
 
   server.get('/api/v1/extensions/browser-manifest', async () => {

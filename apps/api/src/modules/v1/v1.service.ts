@@ -559,17 +559,17 @@ export class V1Service {
     return [
       {
         id: 'free',
-        label: 'Free',
+        label: '免费版',
         priceCents: 0,
         quota: freeDailyQuota,
-        features: ['本地导出', '标准预设', '基础保存指引'],
+        features: ['本地生成', '标准预设', '保存指引'],
       },
       {
         id: 'pro-monthly',
-        label: 'Pro Monthly',
+        label: '专业版',
         priceCents: 900,
         quota: proDailyQuota,
-        features: ['云端优先队列', '批量处理', '4K 输出', '历史记录', '高级编辑'],
+        features: ['云端生成', '安卓实况单文件', '预览图', '完整素材包', '兼容验证'],
       },
     ];
   }
@@ -598,7 +598,7 @@ export class V1Service {
     const intent = this.checkoutIntents.get(intentId);
 
     if (!intent) {
-      throw new V1Error('checkout-not-found', 'Checkout intent was not found.');
+      throw new V1Error('checkout-not-found', '未找到对应的 VidLive 支付确认记录。');
     }
 
     const user = this.requireUser(intent.userId);
@@ -628,11 +628,11 @@ export class V1Service {
     const user = this.requireUser(input.userId);
 
     if (user.planType !== 'pro') {
-      throw new V1Error('pro-required', 'Batch processing and 4K output require Pro.');
+      throw new V1Error('pro-required', '批量生成和高规格输出需要专业版账号。');
     }
 
     if (input.fileNames.length < 2 || input.fileNames.length > 20) {
-      throw new V1Error('invalid-batch-size', 'Batch size must be between 2 and 20 files.');
+      throw new V1Error('invalid-batch-size', '批量任务需包含 2 到 20 个文件。');
     }
 
     const batch: BatchJob = {
@@ -727,7 +727,7 @@ export class V1Service {
     return [
       {
         id: 'video-to-live-photo',
-        label: 'Video/GIF to Live Photo',
+        label: '视频/GIF 转安卓实况图',
         status: 'available',
         inputs: ['mp4', 'mov', 'gif'],
         outputs: ['zip', 'mov', 'jpeg'],
@@ -736,7 +736,7 @@ export class V1Service {
       },
       {
         id: 'live-photo-to-gif',
-        label: 'Live Photo to GIF',
+        label: '安卓实况图转 GIF',
         status: 'preview',
         inputs: ['zip', 'mov+jpeg'],
         outputs: ['gif'],
@@ -745,7 +745,7 @@ export class V1Service {
       },
       {
         id: 'live-photo-to-mp4',
-        label: 'Live Photo to MP4',
+        label: '安卓实况图转 MP4',
         status: 'preview',
         inputs: ['zip', 'mov+jpeg'],
         outputs: ['mp4'],
@@ -754,7 +754,7 @@ export class V1Service {
       },
       {
         id: 'image-to-live-photo',
-        label: 'Image to Live Photo',
+        label: '图片素材转安卓实况图',
         status: 'preview',
         inputs: ['jpg', 'png', 'webp'],
         outputs: ['zip', 'mov', 'jpeg'],
@@ -763,7 +763,7 @@ export class V1Service {
       },
       {
         id: 'ai-image-motion',
-        label: 'AI Image Motion',
+        label: '图片动态片段生成',
         status: 'planned',
         inputs: ['jpg', 'png', 'webp'],
         outputs: ['mp4', 'live-photo-zip'],
@@ -785,7 +785,7 @@ export class V1Service {
     return [
       {
         id: 'ios-lock-clean',
-        label: 'Clean Lock Screen',
+        label: '竖屏锁屏实况',
         category: 'lock-screen',
         presetId: 'ios-lock-screen',
         aspectRatioId: '9:16',
@@ -794,7 +794,7 @@ export class V1Service {
       },
       {
         id: 'social-loop-square',
-        label: 'Square Social Loop',
+        label: '方形通用动态片段',
         category: 'social',
         presetId: 'social-fallback',
         aspectRatioId: '1:1',
@@ -803,7 +803,7 @@ export class V1Service {
       },
       {
         id: 'pro-cinematic-4k',
-        label: 'Pro Cinematic 4K',
+        label: '高规格横屏实况',
         category: 'seasonal',
         presetId: 'standard-live-photo',
         aspectRatioId: '16:9',
@@ -820,7 +820,7 @@ export class V1Service {
     const record: ApiKeyRecord = {
       id: randomUUID(),
       userId,
-      label: label.trim() || 'Default API key',
+      label: label.trim() || 'VidLive API 密钥',
       prefix: `vl_${secret.slice(0, 10)}`,
       createdAt: new Date().toISOString(),
       lastUsedAt: null,
@@ -846,7 +846,7 @@ export class V1Service {
     const tool = this.getExpansionTools().find((item) => item.id === toolId);
 
     if (!tool) {
-      throw new V1Error('tool-not-found', 'Expansion tool was not found.');
+      throw new V1Error('tool-not-found', '未找到对应的 VidLive 工具。');
     }
 
     if (tool.status === 'planned') {
@@ -883,7 +883,7 @@ export class V1Service {
     endpoints: string[];
   } {
     return {
-      name: 'VidLive Extension Preview',
+      name: 'VidLive 浏览器下载助手',
       version: '0.1.0',
       permissions: ['contextMenus', 'downloads', 'storage'],
       endpoints: ['/api/v1/tools', '/api/v1/templates', '/api/conversions/cloud-jobs'],
@@ -897,9 +897,9 @@ export class V1Service {
     status: 'preview';
   } {
     return {
-      name: 'VidLive Desktop Preview',
+      name: 'VidLive 桌面处理端',
       platforms: ['macOS', 'Windows'],
-      coreWorkflows: ['drag-drop conversion', 'batch queue', 'AirDrop handoff', 'local export history'],
+      coreWorkflows: ['拖拽导入', '云端生成队列', '原文件传输指引', '本地导出记录'],
       status: 'preview',
     };
   }

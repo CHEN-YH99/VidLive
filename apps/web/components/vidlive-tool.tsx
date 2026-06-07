@@ -116,7 +116,7 @@ const backgroundColorOptions = [
 ] as const;
 
 const modeHelpText = {
-  local: '只在浏览器内解析和打包，不上传素材；适合快速预览和普通素材包。安卓实况单文件以云端结果为准。',
+  local: '只在浏览器内解析和打包，不上传素材；适合生成预览封面、动态片段和保存指引。安卓实况单文件以云端结果为准。',
   cloud:
     '把素材提交到后端处理，用 FFmpeg 生成 Android Motion Photo 单文件、预览图和完整素材包；适合最终导出和真机验证。',
 } as const;
@@ -124,7 +124,7 @@ const modeHelpText = {
 const presetHelpText: Record<ExportPresetId, string> = {
   'standard-live-photo': '默认 3 秒，优先保留原素材比例，适合 Google Photos 或抖音的标准动态照片验证。',
   'ios-lock-screen': '默认 2 秒，优先 9:16 竖屏，适合 Google Photos 和抖音识别；ColorOS / 鸿蒙系统相册可能不识别。',
-  'social-fallback': '输出 MP4 / GIF / WebP 等兜底格式，不追求严格实况结构；适合社交平台无法识别动态照片时发布。',
+  'social-fallback': '输出 MP4 / GIF / WebP 等通用格式；适合动态照片结构无法保留时的兼容导出。',
 };
 
 type CloudJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
@@ -252,7 +252,14 @@ const compatibilityOutcomeOptions: Array<{ id: CompatibilityViewerOutcome; label
 
 const compatibilityTextPattern = /^[\p{L}\p{N}\s._+()（）·/-]+$/u;
 const compatibilityMeaningfulTextPattern = /[\p{L}\p{N}]/u;
-const compatibilityControlCharacterPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u;
+const compatibilityControlCharacterClass = [
+  `${String.fromCharCode(0)}-${String.fromCharCode(8)}`,
+  String.fromCharCode(11),
+  String.fromCharCode(12),
+  `${String.fromCharCode(14)}-${String.fromCharCode(31)}`,
+  String.fromCharCode(127),
+].join('');
+const compatibilityControlCharacterPattern = new RegExp(`[${compatibilityControlCharacterClass}]`, 'u');
 const compatibilityOsNameValues: CompatibilityOsName[] = ['Android', 'HarmonyOS', 'Other'];
 const compatibilityDownloadResultValues: CompatibilityDownloadResult[] = ['success', 'failed', 'unknown'];
 const compatibilityTransferPathValues: CompatibilityTransferPath[] = [
@@ -583,14 +590,18 @@ function formatPlanLabel(session: AuthSession | null): string {
   }
 
   if (session.user.planType === 'pro') {
-    return session.user.dailyQuota < 0 ? '永久 VIP / Pro' : 'VIP / Pro';
+    return session.user.dailyQuota < 0 ? '永久专业版' : '专业版';
   }
 
-  return 'Free';
+  return '免费版';
 }
 
 function formatPlanBadge(user: AuthUser): string {
-  return user.dailyQuota < 0 ? '永久' : user.planType;
+  if (user.dailyQuota < 0) {
+    return '永久';
+  }
+
+  return user.planType === 'pro' ? '专业' : '免费';
 }
 
 function formatUserQuota(user: AuthUser): string {
@@ -1154,7 +1165,7 @@ export function VidLiveTool() {
         kind: 'auth-required',
         usage: null,
         resource: null,
-        message: '登录后才能生成文件，系统会按账号套餐分配可用资源。',
+        message: '登录后才能生成安卓实况图，系统会按账号版本校验今日导出额度。',
       });
       setGenerationAccessDialogOpen(true);
       return;
@@ -1178,7 +1189,7 @@ export function VidLiveTool() {
           kind: 'error',
           usage: null,
           resource: null,
-          message: payload?.message ?? '账号资源校验失败，请稍后再试。',
+          message: payload?.message ?? '导出额度校验失败，请稍后再试。',
         });
         setGenerationAccessDialogOpen(true);
         return;
@@ -1201,7 +1212,7 @@ export function VidLiveTool() {
           kind: 'error',
           usage: null,
           resource: null,
-          message: payload?.message ?? '账号资源校验失败，请稍后再试。',
+          message: payload?.message ?? '导出额度校验失败，请稍后再试。',
         });
         setGenerationAccessDialogOpen(true);
         return;
@@ -1220,7 +1231,7 @@ export function VidLiveTool() {
           kind: 'pro-required',
           usage: payload.usage,
           resource: null,
-          message: '云端安卓实况图属于 VIP 资源，免费账号可改用本地生成。',
+          message: '云端安卓实况图需要专业版导出额度，免费账号可改用本地生成。',
         });
         setGenerationAccessDialogOpen(true);
         return;
@@ -1231,7 +1242,7 @@ export function VidLiveTool() {
           kind: 'quota-exhausted',
           usage: payload.usage,
           resource,
-          message: '今日生成次数已用完，请明天再试或升级 VIP。',
+          message: '今日导出额度已用完，请明天再试或升级专业版。',
         });
         setGenerationAccessDialogOpen(true);
         return;
@@ -1295,7 +1306,7 @@ export function VidLiveTool() {
           kind: 'quota-exhausted',
           usage: generationAccess.usage,
           resource: generationAccess.resource,
-          message: '今日生成次数刚刚用完，请明天再试或升级 VIP。',
+          message: '今日导出额度刚刚用完，请明天再试或升级专业版。',
         });
         return;
       }
@@ -1439,7 +1450,7 @@ export function VidLiveTool() {
                 </Panel>
 
                 {keyframeSuggestions.length > 0 && (
-                  <Panel title="AI 关键帧" icon={<ImageIcon size={18} />}>
+                  <Panel title="关键帧建议" icon={<ImageIcon size={18} />}>
                     <div className="grid gap-2">
                       {keyframeSuggestions.map((suggestion) => (
                         <button
@@ -1680,7 +1691,7 @@ export function VidLiveTool() {
                     : '正在生成'
                   : draft.mode === 'cloud'
                     ? '生成安卓实况图'
-                    : '生成文件'}
+                    : '生成导出包'}
               </button>
             </aside>
           </div>
@@ -1812,7 +1823,7 @@ function UploadPanel({
             上传、裁剪、选关键帧，生成可下载导出包
           </h1>
           <p className="mt-4 max-w-2xl text-sm font-semibold leading-7 text-ink/68 sm:text-base">
-            支持 MP4、MOV、GIF。100MB 内默认本地处理；超过本地上限会切到云端兜底提示。
+            支持 MP4、MOV、GIF。100MB 内默认本地处理；超过本地上限会提示切换云端处理。
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
@@ -1859,7 +1870,7 @@ function UploadPanel({
         )}
         {previewUrl && file && !isGif(file) && playbackFailed && (
           <div className="absolute inset-x-3 bottom-3 rounded-lg border border-ink/20 bg-white/95 p-3 text-xs font-bold leading-5 text-ink shadow-clay-sm">
-            浏览器无法预览此视频，云端仍可生成效果图和动图。
+            浏览器无法预览此视频，云端仍可生成预览图和动态片段。
           </div>
         )}
       </div>
@@ -1915,7 +1926,7 @@ function MediaPreview({
       )}
       {!isGif(file) && playbackFailed && (
         <div className="absolute inset-x-4 bottom-4 rounded-lg border border-ink/20 bg-white/95 p-3 text-sm font-bold leading-6 text-ink shadow-clay-sm">
-          浏览器无法播放当前编码，提交云端任务后可查看生成效果图。
+          浏览器无法播放当前编码，提交云端任务后可查看生成预览图。
         </div>
       )}
     </section>
@@ -2065,18 +2076,18 @@ function SidebarInfoCarousel() {
     },
     {
       id: 'pro',
-      title: 'Pro 验证',
+      title: '导出额度',
       icon: <BadgeCheck size={18} />,
       content: (
         <div className="grid h-full grid-rows-2 gap-2">
           <div className="flex flex-col justify-center rounded-lg border-2 border-ink/15 bg-white p-3">
-            <p className="text-sm font-black text-ink">Free</p>
-            <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次、标准实况图、完整 ZIP。</p>
+            <p className="text-sm font-black text-ink">免费版</p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-ink/60">每日 5 次本地生成，支持预览片段和完整 ZIP。</p>
           </div>
           <div className="flex flex-col justify-center rounded-lg border-2 border-ink bg-[#d9f99d] p-3 shadow-clay-sm">
-            <p className="text-sm font-black text-ink">Pro Monthly</p>
+            <p className="text-sm font-black text-ink">专业版</p>
             <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
-              批量处理、4K 素材、云端优先队列、历史记录。
+              云端生成安卓实况单文件，适合真机验证和完整素材交付。
             </p>
           </div>
         </div>
@@ -2084,15 +2095,15 @@ function SidebarInfoCarousel() {
     },
     {
       id: 'toolbox',
-      title: '扩展工具箱',
+      title: '验证工具',
       icon: <Film size={18} />,
       content: (
         <div className="grid h-full grid-rows-5 gap-1.5">
-          <ToolboxMiniItem label="Video/GIF to Android Motion Photo" status="available" />
-          <ToolboxMiniItem label="安卓查看器识别矩阵" status="preview" />
-          <ToolboxMiniItem label="Motion Photo to GIF/MP4" status="preview" />
-          <ToolboxMiniItem label="Image to Motion Photo" status="preview" />
-          <ToolboxMiniItem label="AI Image Motion" status="planned" />
+          <ToolboxMiniItem label="视频/GIF 转安卓实况图" status="available" />
+          <ToolboxMiniItem label="查看器兼容记录" status="preview" />
+          <ToolboxMiniItem label="安卓实况图转 MP4" status="preview" />
+          <ToolboxMiniItem label="图片素材转实况图" status="preview" />
+          <ToolboxMiniItem label="云端生成队列" status="planned" />
         </div>
       ),
     },
@@ -2169,12 +2180,17 @@ function ToolboxMiniItem({ label, status }: { label: string; status: 'available'
     preview: 'bg-[#e4f7ff]',
     planned: 'bg-[#fff4df]',
   }[status];
+  const statusLabel = {
+    available: '可用',
+    preview: '验证中',
+    planned: '规划中',
+  }[status];
 
   return (
     <div className="flex h-full items-center justify-between gap-2 rounded-lg border border-ink/15 bg-white px-2 py-1">
       <span className="truncate text-xs font-black text-ink">{label}</span>
       <span className={`shrink-0 rounded-md border border-ink/15 px-2 py-0.5 text-[10px] font-black text-ink/65 ${statusClass}`}>
-        {status}
+        {statusLabel}
       </span>
     </div>
   );
@@ -2320,13 +2336,13 @@ function GenerationAccessDialog({
   const planLabel = formatPlanLabel(session);
   const title =
     access?.kind === 'ready'
-      ? '生成资源确认'
+      ? '导出额度确认'
       : access?.kind === 'pro-required'
-        ? '需要 VIP 资源'
+        ? '需要专业版导出额度'
         : access?.kind === 'quota-exhausted'
-          ? '今日额度已用完'
-          : access?.kind === 'error'
-            ? '资源校验失败'
+          ? '导出额度已用完'
+        : access?.kind === 'error'
+            ? '额度校验失败'
             : '登录后生成';
 
   return (
@@ -2344,14 +2360,14 @@ function GenerationAccessDialog({
             </span>
             <div className="min-w-0">
               <p id="generation-access-title" className="text-sm font-black text-ink">
-                {isChecking ? '正在校验资源' : title}
+                {isChecking ? '正在校验额度' : title}
               </p>
-              <p className="mt-1 truncate text-xs font-bold text-ink/55">{session?.user.email ?? '登录后分配资源额度'}</p>
+              <p className="mt-1 truncate text-xs font-bold text-ink/55">{session?.user.email ?? '登录后校验导出额度'}</p>
             </div>
           </div>
           <button
             type="button"
-            aria-label="关闭生成资源确认"
+            aria-label="关闭导出额度确认"
             disabled={isConsuming}
             onClick={() => onOpenChange(false)}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/10 disabled:text-ink/35"
@@ -2362,9 +2378,9 @@ function GenerationAccessDialog({
 
         <div className="min-h-0 overflow-y-auto p-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <GenerationResourceCard label="当前套餐" value={planLabel} detail={session ? '账号已识别' : '未登录不可生成'} />
+            <GenerationResourceCard label="账号版本" value={planLabel} detail={session ? '账号已校验' : '未登录不可导出'} />
             <GenerationResourceCard
-              label="今日额度"
+              label="导出额度"
               value={formatQuotaValue(usage)}
               detail={formatQuotaDetail(usage)}
             />
@@ -2389,7 +2405,7 @@ function GenerationAccessDialog({
 
           {isReady && usage && (
             <p className="mt-3 rounded-lg border border-ink/10 bg-[#d9f99d] px-3 py-2 text-xs font-bold leading-5 text-ink/70">
-              点击确认后会消耗 1 次今日额度，生成完成后可在弹窗里下载结果。
+              点击确认后会消耗 1 次今日导出额度，生成完成后可在弹窗里下载结果。
             </p>
           )}
 
@@ -2455,7 +2471,7 @@ function GenerationResourceCard({ label, value, detail }: { label: string; value
 function getGenerationResourceCopy(resource: GenerationResource | null, mode: ConversionDraft['mode']) {
   if (resource === 'pro-cloud') {
     return {
-      title: 'VIP 云端资源',
+      title: '专业版云端导出',
       description: '可生成 Android Motion Photo 单文件、预览图和完整素材包，适合最终真机验证。',
       tone: 'bg-[#f7c948]',
       icon: <Crown size={16} />,
@@ -2464,8 +2480,8 @@ function getGenerationResourceCopy(resource: GenerationResource | null, mode: Co
 
   if (resource === 'pro-local') {
     return {
-      title: 'VIP 本地资源',
-      description: '使用 VIP 日额度进行本地生成，素材仍不离开浏览器。',
+      title: '专业版本地导出',
+      description: '使用专业版日额度进行本地导出，素材仍不离开浏览器。',
       tone: 'bg-[#d9f99d]',
       icon: <Crown size={16} />,
     };
@@ -2473,8 +2489,8 @@ function getGenerationResourceCopy(resource: GenerationResource | null, mode: Co
 
   if (resource === 'free-local') {
     return {
-      title: 'Free 本地资源',
-      description: '每日 5 次本地生成，支持标准预设和完整 ZIP 下载。',
+      title: '免费版本地导出',
+      description: '每日 5 次本地导出，支持标准预设和完整 ZIP 下载。',
       tone: 'bg-[#d9f99d]',
       icon: <ShieldCheck size={16} />,
     };
@@ -2482,16 +2498,16 @@ function getGenerationResourceCopy(resource: GenerationResource | null, mode: Co
 
   if (mode === 'cloud') {
     return {
-      title: '云端资源未开放',
-      description: '云端安卓实况图需要 VIP；免费账号可以切回本地生成。',
+      title: '云端导出未开放',
+      description: '云端安卓实况图需要专业版账号；免费账号可以切回本地生成。',
       tone: 'bg-[#ffe2dc]',
       icon: <Crown size={16} />,
     };
   }
 
   return {
-    title: '等待账号资源',
-    description: '登录后会根据 Free 或 VIP 套餐分配可用生成资源。',
+    title: '等待额度校验',
+    description: '登录后会根据账号版本校验可用导出额度。',
     tone: 'bg-[#e4f7ff]',
     icon: <LogIn size={16} />,
   };
@@ -2545,7 +2561,7 @@ function AuthEntryButton({
             </div>
             <dl className="mt-3 grid gap-2">
               <div className="flex items-center justify-between gap-3">
-                <dt className="font-black text-ink/45">当前套餐</dt>
+                <dt className="font-black text-ink/45">账号版本</dt>
                 <dd className="min-w-0 truncate font-black">{planLabel}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
@@ -2959,13 +2975,13 @@ function AuthDialog({
           <div>
             <p id="auth-dialog-title" className="flex items-center gap-2 text-sm font-black text-ink">
               <LogIn size={18} className="text-[#23b7a4]" />
-              账号入口
+              VidLive 账号
             </p>
-            <p className="mt-1 text-xs font-bold leading-5 text-ink/60">保存配额、历史和后续批量能力。</p>
+            <p className="mt-1 text-xs font-bold leading-5 text-ink/60">用于同步安卓实况图导出额度。</p>
           </div>
           <button
             type="button"
-            aria-label="关闭账号入口"
+            aria-label="关闭 VidLive 账号"
             onClick={() => onOpenChange(false)}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5"
           >
@@ -3061,7 +3077,7 @@ function AuthDialog({
                   onChange={(event) => setRememberLogin(event.target.checked)}
                   className="h-4 w-4 accent-[#23b7a4]"
                 />
-                记住密码 3 天
+                保持登录 3 天
               </label>
             )}
 
@@ -3242,7 +3258,7 @@ function GenerationDialog({
     status === 'generating'
       ? isCloudMode
         ? '正在生成安卓实况图'
-        : '正在生成文件'
+        : '正在生成导出包'
       : status === 'failed'
         ? '生成失败'
         : '生成完成';
@@ -3250,8 +3266,8 @@ function GenerationDialog({
     status === 'generating'
       ? '进度和后续结果都会留在这里，关闭弹窗后也能从左下角重新打开。'
       : status === 'failed'
-        ? '这次没有拿到可用结果，先看原因再调整素材。'
-        : '文件已经生成，直接在这里预览和下载。';
+        ? '这次没有拿到可用导出结果，先看原因再调整素材。'
+        : '导出结果已经生成，直接在这里预览和下载。';
   const titleIcon =
     status === 'generating' ? (
       <Loader2 size={18} className="animate-spin text-[#6aa9ff]" />
@@ -3411,7 +3427,7 @@ function CompatibilityLabDialog({
             <p className="mt-1 break-all text-[11px] font-bold leading-4 text-ink/60 lg:text-xs lg:leading-5">
               {downloadContext
                 ? `已触发下载：${downloadContext.fileName}`
-                : '补充当前设备识别结果，后续兼容判断才不会靠玄学。'}
+                : '补充当前设备识别结果，用于完善兼容性判断。'}
             </p>
           </div>
           <button
@@ -3782,7 +3798,7 @@ function CompatibilitySubmitSuccessDialog({
           id="compatibility-submit-success-description"
           className="mx-auto mt-2 max-w-[17rem] text-sm font-bold leading-6 text-ink/65"
         >
-          感谢您的反馈，这对我们很重要！结果已记录，我们会用于后续兼容判断。
+          兼容结果已记录，将用于完善设备识别规则。
         </p>
         <button
           type="button"
@@ -3918,7 +3934,7 @@ function CloudJobPanel({
       {canPreviewPhoto && previewPhotoUrl && (
         <div className="mt-3 rounded-lg border-2 border-ink/15 bg-white p-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-black text-ink">生成效果图</p>
+            <p className="text-sm font-black text-ink">生成预览图</p>
             {job.previewPhoto && (
               <span className="text-xs font-black text-ink/55">{formatBytes(job.previewPhoto.sizeBytes)}</span>
             )}

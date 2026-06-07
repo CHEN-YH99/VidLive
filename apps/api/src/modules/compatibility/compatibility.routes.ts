@@ -83,7 +83,7 @@ export function registerCompatibilityRoutes(server: FastifyInstance, config: App
     if (request.params.sampleId !== compatibilitySampleId) {
       return reply.status(404).send({
         code: 'compatibility-sample-not-found',
-        message: 'Compatibility sample was not found.',
+        message: '未找到对应的安卓实况图兼容样本。',
       });
     }
 
@@ -121,7 +121,7 @@ export function registerCompatibilityRoutes(server: FastifyInstance, config: App
     if (duplicateCount >= duplicateLimit) {
       return reply.status(429).send({
         code: 'compatibility-report-rate-limited',
-        message: 'Too many compatibility reports from this client. Please try later.',
+        message: '当前设备提交兼容结果过于频繁，请稍后再试。',
       });
     }
 
@@ -314,38 +314,38 @@ function parseCompatibilityReport(
   testKit: CompatibilityTestKit,
 ): { ok: true; report: CompatibilityReportInput } | { ok: false; message: string } {
   if (!isRecord(body)) {
-    return { ok: false, message: 'Report body must be an object.' };
+    return { ok: false, message: '兼容结果内容必须是对象。' };
   }
 
   if (body.sampleId !== testKit.sampleId) {
-    return { ok: false, message: 'Unknown compatibility sample.' };
+    return { ok: false, message: '未知的安卓实况图兼容样本。' };
   }
 
   if (typeof body.sampleSha256 === 'string' && body.sampleSha256 !== testKit.sha256) {
-    return { ok: false, message: 'Compatibility sample checksum does not match.' };
+    return { ok: false, message: '兼容样本校验值不匹配，请重新下载样本。' };
   }
 
   if (!isCompatibilityOsName(body.osName)) {
-    return { ok: false, message: 'Invalid OS name.' };
+    return { ok: false, message: '系统名称不在兼容验证范围内。' };
   }
 
   if (!isDownloadResult(body.downloadResult)) {
-    return { ok: false, message: 'Invalid download result.' };
+    return { ok: false, message: '下载结果不在兼容验证范围内。' };
   }
 
   if (!isTransferPath(body.transferPath)) {
-    return { ok: false, message: 'Invalid transfer path.' };
+    return { ok: false, message: '保存路径不在兼容验证范围内。' };
   }
 
   if (!Array.isArray(body.viewers) || body.viewers.length === 0 || body.viewers.length > 8) {
-    return { ok: false, message: 'Viewer results are required.' };
+    return { ok: false, message: '请至少提交一个查看器识别结果。' };
   }
 
   const viewers: CompatibilityViewerReport[] = [];
 
   for (const viewer of body.viewers) {
     if (!isRecord(viewer) || !isViewerId(viewer.viewer) || !isViewerOutcome(viewer.outcome)) {
-      return { ok: false, message: 'Invalid viewer result.' };
+      return { ok: false, message: '查看器识别结果不在兼容验证范围内。' };
     }
 
     const nextViewer: CompatibilityViewerReport = {

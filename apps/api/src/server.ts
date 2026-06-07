@@ -39,7 +39,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
 
     reply.status(500).send({
       code: 'internal-server-error',
-      message: 'Unexpected server error.',
+      message: '服务器处理 VidLive 请求时出现异常。',
     });
   });
 

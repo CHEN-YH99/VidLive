@@ -77,7 +77,7 @@ export async function generateLocalExport(
         id: 'cover',
         kind: 'cover',
         label: '关键帧 JPEG',
-        description: '用于后续 Live Photo 封面验证和导出结果预览。',
+        description: '用于安卓实况图封面验证和导出结果预览。',
         fileName: `${baseName}-cover.jpg`,
         mimeType: coverBlob.type,
         blob: coverBlob,
@@ -89,13 +89,13 @@ export async function generateLocalExport(
           id: 'webp-preview',
           kind: 'webp',
           label: 'WebP 预览',
-          description: 'P2 WebP 导出产物，用于网页和社交场景预览。',
+          description: '用于网页预览和通用格式兼容检查。',
           fileName: `${baseName}-preview.webp`,
           mimeType: webpBlob.type,
           blob: webpBlob,
         });
       } else {
-        warnings.push('当前浏览器未能生成 WebP 预览，云端处理可作为兜底。');
+        warnings.push('当前浏览器未能生成 WebP 预览，可切换云端处理。');
       }
     } else {
       warnings.push('未能抓取关键帧，导出包会缺少静态封面。');
@@ -103,19 +103,19 @@ export async function generateLocalExport(
   }
 
   if (isGifFile(file)) {
-    warnings.push('GIF 的浏览器本地裁剪能力有限，当前导出包会保留原 GIF 作为兜底素材。');
+    warnings.push('GIF 的浏览器本地裁剪能力有限，当前导出包会保留原 GIF 作为备用素材。');
     artifacts.push({
       id: 'source-gif',
       kind: 'source',
       label: '原始 GIF',
-      description: '当前 Phase 1 对 GIF 使用原文件兜底，后续可接入 GIF 转码。',
+      description: '保留原始 GIF，便于云端处理或兼容复测。',
       fileName: `${baseName}.gif`,
       mimeType: file.type || 'image/gif',
       blob: file,
     });
   } else {
     if (!draft.muted) {
-      warnings.push('浏览器本地录制暂不保留原始音频；需要音频时请在 Beta 云端处理。');
+      warnings.push('浏览器本地录制暂不保留原始音频；需要音频时请使用云端处理。');
     }
 
     try {
@@ -134,11 +134,11 @@ export async function generateLocalExport(
     } catch {
       const sourceExtension = getSourceExtension(file);
 
-      warnings.push('浏览器本地录制动态片段失败，导出包已保留原始视频作为兜底素材；请缩短片段、降低分辨率，或切换 Beta 云端处理。');
+      warnings.push('浏览器本地录制动态片段失败，导出包已保留原始视频作为备用素材；请缩短片段、降低分辨率，或切换云端处理。');
       artifacts.push({
         id: 'source-video',
         kind: 'source',
-        label: '原始视频兜底',
+        label: '原始视频备份',
         description: '本地裁剪录制失败时保留的原始素材，方便继续用云端处理复测。',
         fileName: `${baseName}-source${sourceExtension}`,
         mimeType: file.type || (sourceExtension === '.mov' ? 'video/quicktime' : 'video/mp4'),
@@ -161,7 +161,7 @@ export async function generateLocalExport(
     livePhotoRecognition: 'not-ready-local-web-export',
     metadataInjected: false,
     warnings,
-    note: 'Phase 1 本地 MVP 导出包。当前 ZIP 用于预览、裁剪和兜底导出；Android Motion Photo 单文件以云端 motion-photo_MP.jpg 为准。',
+    note: 'VidLive 本地导出包用于预览、裁剪、关键帧和兼容格式导出；Android Motion Photo 单文件以云端 motion-photo_MP.jpg 为准。',
   });
   const readmeBlob = createTextBlob(createReadmeText(draft, warnings));
 
@@ -322,9 +322,9 @@ function createReadmeText(draft: ConversionDraft, warnings: string[]): string {
   const warningText = warnings.length > 0 ? warnings.map((warning) => `- ${warning}`).join('\n') : '- 暂无。';
 
   return [
-    'VidLive Phase 1 本地导出包',
+    'VidLive 本地导出包',
     '',
-    '重要说明：当前 ZIP 是本地素材包，用于预览、裁剪、关键帧和兜底导出；它不是 Android Motion Photo 单文件。若要验证安卓实况图，请使用云端生成的 motion-photo_MP.jpg。',
+    '重要说明：当前 ZIP 是本地素材包，用于预览、裁剪、关键帧和兼容格式导出；它不是 Android Motion Photo 单文件。若要验证安卓实况图，请使用云端生成的 motion-photo_MP.jpg。',
     '',
     `预设：${preset.label}`,
     `片段：${draft.startSeconds.toFixed(2)}s - ${draft.endSeconds.toFixed(2)}s`,
@@ -336,12 +336,12 @@ function createReadmeText(draft: ConversionDraft, warnings: string[]): string {
     '1. 安卓浏览器：云端生成后直接下载 motion-photo_MP.jpg。',
     '2. Google Photos / 抖音：优先用它们验证动态图入口。',
     '3. ColorOS / 鸿蒙系统相册：若只显示静态图，按查看器兼容性限制记录。',
-    '4. 桌面浏览器：下载 ZIP 后，取出素材做兜底或调试。',
+    '4. 桌面浏览器：下载 ZIP 后，取出素材做通用格式交付或兼容复测。',
     '',
     '注意：',
     warningText,
     '',
-    '当前为 Phase 1 MVP。本地包用于跑通导入、裁剪、关键帧和导出闭环；安卓实况主产物由云端链路生成。',
+    '本地包用于完成导入、裁剪、关键帧和通用格式导出；安卓实况主产物由云端链路生成。',
   ].join('\n');
 }
 

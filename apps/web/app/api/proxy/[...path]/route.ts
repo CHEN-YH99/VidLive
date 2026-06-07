@@ -42,7 +42,7 @@ async function proxyRequest(request: Request, context: ProxyContext): Promise<Re
     return Response.json(
       {
         code: 'api-proxy-failed',
-        message: error instanceof Error ? error.message : 'API proxy failed.',
+        message: error instanceof Error ? error.message : 'VidLive API 代理请求失败。',
         target: targetUrl.toString(),
       },
       { status: 502 },

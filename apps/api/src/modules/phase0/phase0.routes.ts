@@ -56,7 +56,7 @@ export function registerPhaseZeroRoutes(server: FastifyInstance, config: AppConf
     ]);
 
     return {
-      phase: 'Phase 0',
+      phase: 'android-motion-photo-validation',
       timestamp: new Date().toISOString(),
       verdict: {
         ffmpegReady: tools.some((tool) => tool.name === 'ffmpeg' && tool.available),
@@ -68,13 +68,13 @@ export function registerPhaseZeroRoutes(server: FastifyInstance, config: AppConf
         localFileSizeBytes: config.localFileSizeBytes,
         cloudFileSizeBytes: config.cloudFileSizeBytes,
       },
-      note: 'exiftool 缺失时仍可生成 MOV/JPEG/ZIP POC，但不能证明 Apple Live Photo 元数据链路完整。',
+      note: 'exiftool 缺失时仍可生成 MOV/JPEG/ZIP，但不能完成 Apple Live Photo 元数据注入。',
     };
   });
 
   server.get('/api/phase0/checklist', async () => {
     return {
-      phase: 'Phase 0',
+      phase: 'android-motion-photo-validation',
       modules: phaseZeroModules,
       savePathSteps,
       exitCriteria: phaseZeroExitCriteria,
@@ -90,14 +90,14 @@ export function registerPhaseZeroRoutes(server: FastifyInstance, config: AppConf
     if (!upload) {
       return reply.status(400).send({
         code: 'file-required',
-        message: 'Phase 0 POC requires one uploaded MP4/MOV file.',
+        message: '安卓实况图生成需要上传一个 MP4 或 MOV 文件。',
       });
     }
 
     if (!isSupportedUpload(upload.filename, upload.mimetype)) {
       return reply.status(415).send({
         code: 'unsupported-format',
-        message: 'Only MP4 and MOV are supported by the Phase 0 Live Photo POC.',
+        message: '仅支持 MP4 和 MOV 格式。',
       });
     }
 
@@ -117,7 +117,7 @@ export function registerPhaseZeroRoutes(server: FastifyInstance, config: AppConf
     });
 
     return {
-      phase: 'Phase 0',
+      phase: 'android-motion-photo-validation',
       id: workId,
       status: 'generated',
       artifacts: {
@@ -131,10 +131,10 @@ export function registerPhaseZeroRoutes(server: FastifyInstance, config: AppConf
       probe: result.probe,
       warnings: result.warnings,
       manualVerification: [
-        'Transfer the ZIP to an iPhone by AirDrop or Files.',
-        'Try importing photo.jpg and video.mov by the selected save path.',
-        'Record whether Photos recognizes the pair as Live Photo.',
-        'Record whether iOS 17+ lock screen playback works.',
+        '将 motion-photo_MP.jpg 传输到安卓设备。',
+        '优先使用 Google Photos 或抖音打开。',
+        '记录查看器是否出现动态照片播放入口。',
+        '若系统相册只显示静态图，请按兼容限制记录。',
       ],
     };
   });

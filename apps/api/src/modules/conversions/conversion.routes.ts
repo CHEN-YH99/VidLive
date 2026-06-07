@@ -86,7 +86,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
   server.post('/api/conversions/cloud-intents', async () => {
     return {
       code: 'cloud-processing-enabled',
-      message: 'Cloud processing is available for Beta fallback.',
+      message: '云端处理已可用于安卓实况图生成。',
       uploadPolicy: {
         requiresConsent: true,
         defaultRetentionHours: config.cloudRetentionHours,
@@ -108,14 +108,14 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     if (!upload) {
       return reply.status(400).send({
         code: 'missing-file',
-        message: 'Cloud conversion requires one uploaded MP4, MOV, or GIF file.',
+        message: '云端生成需要上传一个 MP4、MOV 或 GIF 文件。',
       });
     }
 
     if (!isSupportedUpload(upload.filename, upload.mimetype)) {
       return reply.status(415).send({
         code: 'unsupported-format',
-        message: 'Only MP4, MOV, and GIF are supported.',
+        message: '仅支持 MP4、MOV 和 GIF 格式。',
       });
     }
 
@@ -132,7 +132,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     if (sourceStat.size > config.cloudFileSizeBytes) {
       return reply.status(413).send({
         code: 'file-too-large',
-        message: 'Uploaded file exceeds the Beta cloud size limit.',
+        message: '上传文件超过云端处理大小限制。',
         maxFileSizeBytes: config.cloudFileSizeBytes,
       });
     }
@@ -157,7 +157,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     if (!job) {
       return reply.status(404).send({
         code: 'conversion-job-not-found',
-        message: 'Cloud conversion job was not found or has been deleted.',
+        message: '未找到云端生成任务，或任务已被删除。',
       });
     }
 
@@ -170,7 +170,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     if (!download) {
       return reply.status(404).send({
         code: 'download-not-ready',
-        message: 'Cloud conversion artifact is not ready, expired, or deleted.',
+        message: '云端导出包尚未生成、已过期或已删除。',
       });
     }
 
@@ -187,7 +187,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     if (!download) {
       return reply.status(404).send({
         code: 'android-motion-photo-not-ready',
-        message: 'Android Motion Photo artifact is not ready, expired, or deleted.',
+        message: '安卓实况图尚未生成、已过期或已删除。',
       });
     }
 
@@ -204,7 +204,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     if (!download) {
       return reply.status(404).send({
         code: 'preview-photo-not-ready',
-        message: 'Preview photo artifact is not ready, expired, or deleted.',
+        message: '预览图尚未生成、已过期或已删除。',
       });
     }
 
@@ -221,7 +221,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     if (!download) {
       return reply.status(404).send({
         code: 'paired-video-not-ready',
-        message: 'Paired Live Photo video artifact is not ready, expired, or deleted.',
+        message: '配套动态片段尚未生成、已过期或已删除。',
       });
     }
 
@@ -238,7 +238,7 @@ export function registerConversionRoutes(server: FastifyInstance, config: AppCon
     if (!job) {
       return reply.status(404).send({
         code: 'conversion-job-not-found',
-        message: 'Cloud conversion job was not found or has already been deleted.',
+        message: '云端生成任务不存在，或已被删除。',
       });
     }
 

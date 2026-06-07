@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'VidLive',
-  description: 'Local-first Live Photo conversion tool.',
+  description: 'VidLive 安卓实况图生成与真机兼容验证工具。',
   icons: {
     icon: [{ url: '/images/01.webp', type: 'image/webp' }],
   },

@@ -68,8 +68,8 @@ export const exportPresets: Record<ExportPresetId, ExportPreset> = {
   },
   'social-fallback': {
     id: 'social-fallback',
-    label: '社交兜底',
-    target: '导出 MP4 / GIF / WebP 兜底格式',
+    label: '通用格式导出',
+    target: '导出 MP4 / GIF / WebP 通用格式',
     defaultDurationSeconds: 3,
     maxDurationSeconds: productLimits.livePhotoMaxDurationSeconds,
     preferredAspectRatio: 'source',
@@ -130,7 +130,7 @@ export const failureAdvice: Record<FailureReason, FailureAdvice> = {
   'local-transcode-failed': {
     reason: 'local-transcode-failed',
     title: '本地转换失败',
-    action: '降低分辨率、改用 MP4 兜底，或切换云端处理。',
+    action: '降低分辨率、导出通用 MP4，或切换云端处理。',
   },
   'cloud-required': {
     reason: 'cloud-required',
@@ -145,7 +145,7 @@ export const failureAdvice: Record<FailureReason, FailureAdvice> = {
   'expired-link': {
     reason: 'expired-link',
     title: '下载链接已过期',
-    action: '重新生成文件。',
+    action: '重新生成导出结果。',
   },
   'lock-screen-not-playing': {
     reason: 'lock-screen-not-playing',
@@ -313,7 +313,7 @@ export interface ExitCriterion {
 export const phaseZeroModules: ValidationModule[] = [
   {
     id: 'android-motion-photo-poc',
-    title: 'Android Motion Photo 生成 POC',
+    title: 'Android Motion Photo 生成验证',
     summary: '确认短视频能走完导入、裁剪、封面帧、Motion Photo 单文件和 ZIP 导出。',
     status: 'pass',
     proof: '已用 Android 真机验证 motion-photo_MP.jpg 可被系统识别为实况图。',
@@ -488,7 +488,7 @@ export const phaseZeroExitCriteria: ExitCriterion[] = [
   },
   {
     id: 'fallback-rule',
-    title: '云端兜底触发规则明确',
+    title: '云端处理触发规则明确',
     detail: '文件过大、编码不支持或本地失败时切换。',
   },
 ];

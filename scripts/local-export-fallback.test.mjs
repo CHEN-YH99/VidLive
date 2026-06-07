@@ -14,7 +14,7 @@ test('local export keeps a source video fallback when browser recording fails', 
   assert.match(source, /catch\s*{/);
   assert.match(source, /id:\s*'source-video'/);
   assert.match(source, /kind:\s*'source'/);
-  assert.match(source, /原始视频兜底/);
+  assert.match(source, /原始视频备份/);
   assert.match(source, /浏览器本地录制动态片段失败/);
 });
 

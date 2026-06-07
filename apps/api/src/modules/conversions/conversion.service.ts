@@ -555,7 +555,7 @@ export class ConversionService {
         progress: 100,
         error: {
           code: 'cloud-conversion-failed',
-          message: error instanceof Error ? error.message : 'Cloud conversion failed.',
+          message: error instanceof Error ? error.message : '云端安卓实况图生成失败。',
         },
       });
       this.logger?.error({ jobId: job.id, error }, 'Cloud conversion job failed.');
@@ -595,7 +595,7 @@ export class ConversionService {
         status === 'failed'
           ? {
               code: 'cloud-conversion-failed',
-              message: queueJob.failedReason || record.error?.message || 'Cloud conversion failed.',
+              message: queueJob.failedReason || record.error?.message || '云端安卓实况图生成失败。',
             }
           : record.error,
     });
