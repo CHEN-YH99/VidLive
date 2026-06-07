@@ -264,7 +264,6 @@ async function registerWithEmailCode(
       email: input.email,
       purpose: 'register',
       username: input.username,
-      password: input.password,
       context,
     }),
   );

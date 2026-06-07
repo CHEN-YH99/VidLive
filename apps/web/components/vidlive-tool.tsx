@@ -8,6 +8,8 @@ import {
   CloudOff,
   Crown,
   Download,
+  Eye,
+  EyeOff,
   FileArchive,
   Film,
   ImageIcon,
@@ -2736,14 +2738,7 @@ interface AuthLoginEmailCodeRequiredResponse {
   message?: string;
 }
 
-function validateAuthForm(
-  mode: AuthMode,
-  email: string,
-  username: string,
-  password: string,
-  emailCode: string,
-  requireEmailCode: boolean,
-): AuthFieldErrors {
+function validateAuthForm(mode: AuthMode, email: string, username: string, password: string, emailCode: string, requireEmailCode: boolean): AuthFieldErrors {
   const errors: AuthFieldErrors = {};
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedUsername = username.trim();
@@ -2756,11 +2751,11 @@ function validateAuthForm(
     errors.username = '用户名需为 2-32 位，可用中英文、数字、下划线或短横线。';
   }
 
-  if (mode === 'login') {
+  if (mode === 'login' && !requireEmailCode) {
     if (!password) {
       errors.password = '请输入密码。';
     }
-  } else {
+  } else if (mode !== 'login') {
     const passwordUsername = mode === 'register' ? normalizedUsername : '';
     const failedRule = getPasswordRules(password, normalizedEmail, passwordUsername).find((rule) => !rule.passed);
 
@@ -2776,7 +2771,7 @@ function validateAuthForm(
   return errors;
 }
 
-function validateAuthEmailCodeRequest(mode: AuthMode, email: string, username: string, password: string): AuthFieldErrors {
+function validateAuthEmailCodeRequest(mode: AuthMode, email: string, username: string): AuthFieldErrors {
   const errors: AuthFieldErrors = {};
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedUsername = username.trim();
@@ -2788,12 +2783,6 @@ function validateAuthEmailCodeRequest(mode: AuthMode, email: string, username: s
   if (mode === 'register') {
     if (!/^[\p{L}\p{N}_-]{2,32}$/u.test(normalizedUsername)) {
       errors.username = '用户名需为 2-32 位，可用中英文、数字、下划线或短横线。';
-    }
-
-    const failedRule = getPasswordRules(password, normalizedEmail, normalizedUsername).find((rule) => !rule.passed);
-
-    if (failedRule) {
-      errors.password = failedRule.label;
     }
   }
 
@@ -2923,6 +2912,7 @@ function AuthDialog({
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [emailCode, setEmailCode] = useState('');
   const [loginEmailTicket, setLoginEmailTicket] = useState<AuthLoginEmailTicket | null>(null);
   const [rememberLogin, setRememberLogin] = useState(false);
@@ -2942,16 +2932,22 @@ function AuthDialog({
   );
   const isEmailCodeComplete = /^\d{6}$/u.test(emailCode.trim());
   const canSubmit = Object.keys(fieldErrors).length === 0;
-  const resetAuthTransientState = useCallback(() => {
+  const resetAuthTransientState = useCallback((clearPassword = false) => {
     setEmailCode('');
     setLoginEmailTicket(null);
     setEmailCodeCooldown(0);
     setStatus(null);
     setIsSubmitting(false);
     setIsSendingEmailCode(false);
+
+    if (clearPassword) {
+      setPassword('');
+      setIsPasswordVisible(false);
+    }
   }, []);
   const closeAuthDialog = useCallback(() => {
-    resetAuthTransientState();
+    resetAuthTransientState(true);
+    setAutomationTrap('');
     onOpenChange(false);
   }, [onOpenChange, resetAuthTransientState]);
 
@@ -2993,7 +2989,7 @@ function AuthDialog({
 
   const switchAuthMode = (nextMode: AuthMode) => {
     setMode(nextMode);
-    resetAuthTransientState();
+    resetAuthTransientState(true);
     setAutomationTrap('');
   };
 
@@ -3013,7 +3009,7 @@ function AuthDialog({
       return;
     }
 
-    const nextErrors = validateAuthEmailCodeRequest(mode, email, username, password);
+    const nextErrors = validateAuthEmailCodeRequest(mode, email, username);
 
     if (Object.keys(nextErrors).length > 0) {
       setStatus(Object.values(nextErrors)[0] ?? '请检查表单。');
@@ -3029,7 +3025,6 @@ function AuthDialog({
         email: string;
         purpose: 'register' | 'reset-password';
         username?: string;
-        password?: string;
       } = {
         email: normalizedEmail,
         purpose: mode === 'register' ? 'register' : 'reset-password',
@@ -3037,7 +3032,6 @@ function AuthDialog({
 
       if (mode === 'register') {
         requestBody.username = username.trim();
-        requestBody.password = password;
       }
 
       const response = await fetch(toApiUrl('/api/v1/auth/email-codes'), {
@@ -3103,13 +3097,11 @@ function AuthDialog({
           return;
         }
 
+        resetAuthTransientState(true);
         onAuthSuccess({
           user: payload.user,
           token: payload.token,
         });
-        setPassword('');
-        setEmailCode('');
-        setLoginEmailTicket(null);
         return;
       }
 
@@ -3135,6 +3127,7 @@ function AuthDialog({
 
         setMode('login');
         setPassword('');
+        setIsPasswordVisible(false);
         setEmailCode('');
         setLoginEmailTicket(null);
         setStatus(payload.message ?? '密码已重置，请使用新密码登录。');
@@ -3194,6 +3187,8 @@ function AuthDialog({
         payload.expiresAt
       ) {
         setEmail(payload.email);
+        setPassword('');
+        setIsPasswordVisible(false);
         setEmailCode('');
         setLoginEmailTicket({
           ticket: payload.loginTicket,
@@ -3214,6 +3209,7 @@ function AuthDialog({
         setEmail(payload.user.email || normalizedEmail);
         setUsername('');
         setPassword('');
+        setIsPasswordVisible(false);
         setEmailCode('');
         setAutomationTrap('');
         setStatus('注册成功，请登录。');
@@ -3225,12 +3221,11 @@ function AuthDialog({
         return;
       }
 
+      resetAuthTransientState(true);
       onAuthSuccess({
         user: payload.user,
         token: payload.token,
       });
-      setPassword('');
-      setEmailCode('');
     } catch (error) {
       setStatus(error instanceof Error && error.message === 'auth-challenge-unsupported' ? '当前浏览器不支持登录校验。' : '账号服务不可用');
     } finally {
@@ -3239,6 +3234,15 @@ function AuthDialog({
   };
 
   const authModeItems: AuthMode[] = ['login', 'register', 'reset-password'];
+  const authFormKind = loginEmailTicket ? 'login-code' : mode;
+  const authAutocompleteKind = authFormKind.replace(/-/gu, '');
+  const authFormId = `vidlive-auth-${authFormKind}`;
+  const authAutocompleteSection = `section-vidliveauth${authAutocompleteKind}`;
+  const displayNameFieldId = `${authFormId}-display-name`;
+  const passwordFieldId = mode === 'login' ? 'current-password' : 'new-password';
+  const passwordAutocomplete = `${authAutocompleteSection} ${mode === 'login' ? 'current-password' : 'new-password'}`;
+  const emailFieldId = `${authFormId}-email`;
+  const emailCodeFieldId = `${authFormId}-email-code`;
   const submitLabel = loginEmailTicket
     ? '验证并登录'
     : mode === 'login'
@@ -3290,13 +3294,15 @@ function AuthDialog({
             ))}
           </div>
 
-          <form onSubmit={submitAuth} className="grid gap-3">
+          <form key={authFormId} id={authFormId} onSubmit={submitAuth} autoComplete="on" className="grid gap-3">
             {mode === 'register' && (
               <AuthTextField
+                id={displayNameFieldId}
+                name="display-name"
                 label="用户名"
                 value={username}
                 type="text"
-                autoComplete="username"
+                autoComplete="nickname"
                 placeholder="VidLive 用户"
                 error={fieldErrors.username}
                 maxLength={32}
@@ -3304,30 +3310,39 @@ function AuthDialog({
               />
             )}
             <AuthTextField
+              id={emailFieldId}
+              name="email"
               label="邮箱"
               value={email}
               type="email"
-              autoComplete="email"
+              autoComplete={`${authAutocompleteSection} username`}
+              inputMode="email"
               placeholder="you@example.com"
               error={fieldErrors.email}
               maxLength={254}
               onChange={handleEmailChange}
             />
-            <AuthTextField
-              label={mode === 'reset-password' ? '新密码' : '密码'}
-              value={password}
-              type="password"
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              placeholder={mode === 'login' ? '输入密码' : '10 位以上，含多类字符'}
-              error={fieldErrors.password}
-              maxLength={128}
-              onChange={handlePasswordChange}
-            />
+            {!loginEmailTicket && (
+              <AuthPasswordField
+                id={passwordFieldId}
+                name={mode === 'login' ? 'current-password' : 'new-password'}
+                label={mode === 'reset-password' ? '新密码' : '密码'}
+                value={password}
+                autoComplete={passwordAutocomplete}
+                visible={isPasswordVisible}
+                placeholder={mode === 'login' ? '输入密码' : '10 位以上，含多类字符'}
+                error={fieldErrors.password}
+                maxLength={128}
+                onChange={handlePasswordChange}
+                onVisibleChange={setIsPasswordVisible}
+              />
+            )}
             <div aria-hidden="true" className="hidden">
               <label>
                 公司网址
                 <input
                   type="text"
+                  name="company-url"
                   tabIndex={-1}
                   autoComplete="off"
                   value={automationTrap}
@@ -3356,14 +3371,17 @@ function AuthDialog({
                   邮箱验证码
                   <div className="grid grid-cols-[minmax(0,1fr)_7rem] items-start gap-2">
                     <input
+                      id={emailCodeFieldId}
+                      name="one-time-code"
                       type="text"
                       value={emailCode}
-                      autoComplete="one-time-code"
+                      autoComplete={`${authAutocompleteSection} one-time-code`}
                       inputMode="numeric"
+                      pattern="[0-9]*"
                       placeholder="6 位数字"
                       maxLength={6}
                       aria-invalid={Boolean(fieldErrors.emailCode)}
-                      onChange={(event) => setEmailCode(event.target.value)}
+                      onChange={(event) => setEmailCode(event.target.value.replace(/\D/gu, '').slice(0, 6))}
                       className={[
                         'h-11 rounded-lg border-2 bg-white px-3 text-sm font-black text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2',
                         fieldErrors.emailCode
@@ -3428,6 +3446,8 @@ function AuthDialog({
 }
 
 function AuthTextField({
+  id,
+  name,
   label,
   value,
   type,
@@ -3438,9 +3458,11 @@ function AuthTextField({
   maxLength,
   onChange,
 }: {
+  id: string;
+  name: string;
   label: string;
-  value: string;
   type: 'email' | 'password' | 'text';
+  value: string;
   autoComplete: string;
   inputMode?: 'email' | 'numeric' | 'text';
   placeholder: string;
@@ -3452,6 +3474,8 @@ function AuthTextField({
     <label className="grid gap-1 text-xs font-black text-ink/60">
       {label}
       <input
+        id={id}
+        name={name}
         type={type}
         value={value}
         autoComplete={autoComplete}
@@ -3465,6 +3489,65 @@ function AuthTextField({
           error ? 'border-[#ff715b] focus:border-[#ff715b] focus:ring-[#ff715b]/30' : 'border-ink/15 focus:border-ink focus:ring-[#23b7a4]',
         ].join(' ')}
       />
+      {error && <span className="text-[11px] leading-4 text-[#b63f2f]">{error}</span>}
+    </label>
+  );
+}
+
+function AuthPasswordField({
+  id,
+  name,
+  label,
+  value,
+  autoComplete,
+  visible,
+  placeholder,
+  error,
+  maxLength,
+  onChange,
+  onVisibleChange,
+}: {
+  id: string;
+  name: string;
+  label: string;
+  value: string;
+  autoComplete: string;
+  visible: boolean;
+  placeholder: string;
+  error?: string | undefined;
+  maxLength?: number;
+  onChange: (value: string) => void;
+  onVisibleChange: (visible: boolean) => void;
+}) {
+  return (
+    <label className="grid gap-1 text-xs font-black text-ink/60">
+      {label}
+      <span className="relative block">
+        <input
+          id={id}
+          name={name}
+          type={visible ? 'text' : 'password'}
+          value={value}
+          autoComplete={autoComplete}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          aria-invalid={Boolean(error)}
+          onChange={(event) => onChange(event.target.value)}
+          className={[
+            'h-11 w-full rounded-lg border-2 bg-white px-3 pr-11 text-sm font-black text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2',
+            error ? 'border-[#ff715b] focus:border-[#ff715b] focus:ring-[#ff715b]/30' : 'border-ink/15 focus:border-ink focus:ring-[#23b7a4]',
+          ].join(' ')}
+        />
+        <button
+          type="button"
+          aria-label={visible ? '隐藏密码' : '显示密码'}
+          aria-pressed={visible}
+          onClick={() => onVisibleChange(!visible)}
+          className="absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-md text-ink/55 transition hover:bg-[#e4f7ff] hover:text-ink focus:outline-none focus:ring-2 focus:ring-[#23b7a4]"
+        >
+          {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      </span>
       {error && <span className="text-[11px] leading-4 text-[#b63f2f]">{error}</span>}
     </label>
   );

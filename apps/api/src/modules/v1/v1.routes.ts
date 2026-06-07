@@ -25,7 +25,6 @@ interface EmailCodeBody {
   email?: string;
   purpose?: EmailVerificationPurpose;
   username?: string;
-  password?: string;
 }
 
 interface KeyframeBody {
@@ -88,7 +87,6 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
         email: string;
         purpose: EmailVerificationPurpose;
         username?: string;
-        password?: string;
         context: V1AuthRequestContext;
       } = {
         email: request.body.email ?? '',
@@ -98,10 +96,6 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
 
       if (request.body.username !== undefined) {
         emailCodeInput.username = request.body.username;
-      }
-
-      if (request.body.password !== undefined) {
-        emailCodeInput.password = request.body.password;
       }
 
       return await service.requestEmailCode(emailCodeInput);

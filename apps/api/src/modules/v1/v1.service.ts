@@ -276,7 +276,6 @@ export class V1Service {
     email: string;
     purpose: EmailVerificationPurpose;
     username?: string;
-    password?: string;
     context: V1AuthRequestContext;
   }): Promise<V1EmailCodeRequestResult> {
     const purpose = input.purpose;
@@ -294,18 +293,14 @@ export class V1Service {
     await assertEmailDomainCanReceiveMail(email);
 
     if (purpose === 'register') {
-      const registration = validateRegistrationInput({
-        email,
-        username: input.username ?? '',
-        password: input.password ?? '',
-      });
-      const existingEmail = await this.findUserByEmail(registration.email);
+      const username = validateRegistrationEmailCodeInput(input.username ?? '');
+      const existingEmail = await this.findUserByEmail(email);
 
       if (existingEmail) {
         throw new V1Error('email-already-registered', '该邮箱已注册，请直接登录。');
       }
 
-      if (await this.isUsernameTaken(registration.username)) {
+      if (await this.isUsernameTaken(username)) {
         throw new V1Error('username-already-registered', '该用户名已被占用，请换一个。');
       }
     }
@@ -1753,6 +1748,16 @@ function validateRegistrationInput(input: { email: string; password: string; use
     password,
     username,
   };
+}
+
+function validateRegistrationEmailCodeInput(usernameInput: string): string {
+  const username = usernameInput.trim();
+
+  if (!/^[\p{L}\p{N}_-]{2,32}$/u.test(username)) {
+    throw new V1Error('invalid-username', '用户名需为 2-32 位，可使用中英文、数字、下划线或短横线。');
+  }
+
+  return username;
 }
 
 function validateLoginInput(input: { email: string; password: string }): { email: string; password: string } {
