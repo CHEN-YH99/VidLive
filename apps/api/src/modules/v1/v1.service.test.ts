@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { V1Error, V1Service, type V1AuthChallenge } from './v1.service.js';
+import { V1Error, V1Service, type V1AuthChallenge, type V1AuthRequestContext } from './v1.service.js';
 
 interface TestStoredUser {
   failedLoginCount: number;
@@ -12,14 +12,17 @@ interface TestV1ServiceInternals {
   usersByEmail: Map<string, TestStoredUser>;
 }
 
+const testEmailCode = '123456';
+const testPassword = 'VidLive-Strong-2026!';
+
 test('expired login locks are cleared before counting a new failure', async () => {
   const email = 'locked@example.test';
-  const service = new V1Service('test-secret', null, [email]);
+  const service = createTestService([email]);
 
-  const registered = await service.register({
+  const registered = await registerWithEmailCode(service, {
     email,
     username: 'LockedUser',
-    password: 'VidLive-Strong-2026!',
+    password: testPassword,
   });
 
   assert.equal(registered.user.planType, 'pro');
@@ -60,31 +63,146 @@ test('expired login locks are cleared before counting a new failure', async () =
     isV1Error('invalid-credentials'),
   );
 
-  assert.equal(storedUser.failedLoginCount, 1);
-  assert.equal(storedUser.lockedUntil, null);
+  const refreshedStoredUser = internals.usersByEmail.get(email);
+
+  assert.ok(refreshedStoredUser);
+  assert.equal(refreshedStoredUser.failedLoginCount, 1);
+  assert.equal(refreshedStoredUser.lockedUntil, null);
 });
 
 test('login requires a solved one-time challenge', async () => {
-  const service = new V1Service('test-secret');
+  const service = createTestService();
   const email = 'challenge@example.test';
 
-  await service.register({
+  await registerWithEmailCode(service, {
     email,
     username: 'ChallengeUser',
-    password: 'VidLive-Strong-2026!',
+    password: testPassword,
   });
 
   await assert.rejects(
     service.login({
       email,
-      password: 'VidLive-Strong-2026!',
+      password: testPassword,
     }),
     isV1Error('auth-challenge-required'),
   );
 
   const login = await loginWithChallenge(service, {
     email,
-    password: 'VidLive-Strong-2026!',
+    password: testPassword,
+  });
+
+  assert.equal(login.user.email, email);
+  assert.ok(login.token);
+});
+
+test('registration requires a valid email verification code', async () => {
+  const service = createTestService();
+  const email = 'missing-code@example.test';
+
+  await assert.rejects(
+    service.register({
+      email,
+      username: 'MissingCodeUser',
+      password: testPassword,
+      context: createAuthContext('missing-code-device'),
+    }),
+    isV1Error('invalid-email-code'),
+  );
+});
+
+test('registration succeeds with a verified email code', async () => {
+  const service = createTestService();
+  const email = 'register-code@example.test';
+
+  const result = await registerWithEmailCode(service, {
+    email,
+    username: 'RegisterCodeUser',
+    password: testPassword,
+  });
+
+  assert.equal(result.user.email, email);
+  assert.equal(result.user.username, 'RegisterCodeUser');
+  assert.equal(result.user.planType, 'free');
+});
+
+test('login from a new device requires email code and can be completed', async () => {
+  const service = createTestService();
+  const email = 'login-code@example.test';
+  const registrationContext = createAuthContext('login-known-device');
+  const loginContext = createAuthContext('login-new-device');
+
+  await registerWithEmailCode(service, {
+    email,
+    username: 'LoginCodeUser',
+    password: testPassword,
+    context: registrationContext,
+  });
+
+  const challenge = service.createLoginChallenge();
+  const challengedLogin = await withMutedConsoleInfo(() =>
+    service.login({
+      email,
+      password: testPassword,
+      challengeId: challenge.id,
+      challengeAnswer: solveChallenge(challenge),
+      remember: true,
+      context: loginContext,
+    }),
+  );
+
+  assert.ok('requiresEmailCode' in challengedLogin);
+  assert.equal(challengedLogin.email, email);
+  assert.ok(challengedLogin.loginTicket);
+
+  const verifiedLogin = await service.verifyLoginEmailCode({
+    loginTicket: challengedLogin.loginTicket,
+    emailCode: testEmailCode,
+    context: loginContext,
+  });
+
+  assert.equal(verifiedLogin.user.email, email);
+  assert.equal(verifiedLogin.remember, true);
+  assert.ok(verifiedLogin.token);
+});
+
+test('reset password verifies email code before changing credentials', async () => {
+  const service = createTestService();
+  const email = 'reset-password@example.test';
+  const newPassword = 'VidLive-New-2026!';
+
+  await registerWithEmailCode(service, {
+    email,
+    username: 'ResetPasswordUser',
+    password: testPassword,
+  });
+
+  await withMutedConsoleInfo(() =>
+    service.requestEmailCode({
+      email,
+      purpose: 'reset-password',
+      context: createAuthContext('reset-password-device'),
+    }),
+  );
+
+  await service.resetPassword({
+    email,
+    password: newPassword,
+    emailCode: testEmailCode,
+  });
+
+  await assert.rejects(
+    loginWithChallenge(service, {
+      email,
+      password: testPassword,
+    }),
+    isV1Error('invalid-credentials'),
+  );
+
+  const login = await loginWithChallenge(service, {
+    email,
+    password: newPassword,
   });
 
   assert.equal(login.user.email, email);
@@ -97,11 +215,17 @@ async function loginWithChallenge(
 ): Promise<{ user: { email: string }; token: string }> {
   const challenge = service.createLoginChallenge();
 
-  return service.login({
+  const result = await service.login({
     ...input,
     challengeId: challenge.id,
     challengeAnswer: solveChallenge(challenge),
   });
+
+  if ('requiresEmailCode' in result) {
+    throw new Error('Unexpected login email verification challenge.');
+  }
+
+  return result;
 }
 
 function solveChallenge(challenge: V1AuthChallenge): string {
@@ -115,6 +239,63 @@ function solveChallenge(challenge: V1AuthChallenge): string {
   }
 
   throw new Error('Failed to solve auth challenge.');
+}
+
+function createTestService(permanentMemberEmails: readonly string[] = []): V1Service {
+  return new V1Service('test-secret', null, permanentMemberEmails, {
+    emailCodeGenerator: () => testEmailCode,
+    emailCodeLogEnabled: true,
+  });
+}
+
+async function registerWithEmailCode(
+  service: V1Service,
+  input: {
+    email: string;
+    username: string;
+    password: string;
+    context?: V1AuthRequestContext;
+  },
+): Promise<{ user: { email: string; username: string; planType: 'free' | 'pro'; dailyQuota: number } }> {
+  const context = input.context ?? createAuthContext(`register-${input.email}`);
+
+  await withMutedConsoleInfo(() =>
+    service.requestEmailCode({
+      email: input.email,
+      purpose: 'register',
+      username: input.username,
+      password: input.password,
+      context,
+    }),
+  );
+
+  return service.register({
+    email: input.email,
+    username: input.username,
+    password: input.password,
+    emailCode: testEmailCode,
+    context,
+  });
+}
+
+function createAuthContext(deviceId: string): V1AuthRequestContext {
+  return {
+    requestIp: '127.0.0.1',
+    userAgent: 'vidlive-test-agent',
+    deviceId,
+  };
+}
+
+async function withMutedConsoleInfo<T>(operation: () => Promise<T>): Promise<T> {
+  const previousConsoleInfo = console.info;
+
+  console.info = () => undefined;
+
+  try {
+    return await operation();
+  } finally {
+    console.info = previousConsoleInfo;
+  }
 }
 
 function isV1Error(code: string): (error: unknown) => boolean {

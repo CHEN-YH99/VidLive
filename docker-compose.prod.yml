@@ -66,10 +66,10 @@ services:
       - .env.production
     environment:
       NODE_ENV: production
-      PORT: 3001
+      PORT: 8000
       UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
     ports:
-      - "127.0.0.1:${BACKEND_PORT:-3010}:3001"
+      - "127.0.0.1:${BACKEND_PORT:-3010}:8000"
     volumes:
       - backend_uploads:/app/uploads
     depends_on:
@@ -83,7 +83,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""
+          "node -e \"fetch('http://127.0.0.1:' + (process.env.PORT || 8000) + '/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""
         ]
       interval: 20s
       timeout: 5s

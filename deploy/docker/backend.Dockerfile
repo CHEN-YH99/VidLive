@@ -35,7 +35,7 @@ FROM node:20-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3001
+ENV PORT=8000
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 
@@ -49,6 +49,6 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps ./apps
 COPY --from=builder /app/packages ./packages
 
-EXPOSE 3001
+EXPOSE 8000
 
 CMD ["sh", "-c", "pnpm --filter @vidlive/api run start || node apps/api/dist/index.js"]

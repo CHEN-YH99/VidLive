@@ -71,7 +71,7 @@ pnpm run dev:web
 默认端口：
 
 - Web: `http://localhost:3000`
-- API: `http://localhost:3001`
+- API: `http://localhost:8000`
 
 ## Docker API 验证
 
@@ -84,13 +84,13 @@ docker build -f apps/api/Dockerfile -t vidlive-api-exiftool-check .
 启动 API POC 容器：
 
 ```bash
-docker run -d --name vidlive-api-poc -p 3011:3001 -e API_HOST=0.0.0.0 -e API_PORT=3001 -e UPLOAD_DIR=/tmp/vidlive/uploads vidlive-api-exiftool-check
+docker run -d --name vidlive-api-poc -p 3011:8000 -e API_HOST=0.0.0.0 -e API_PORT=8000 -e UPLOAD_DIR=/tmp/vidlive/uploads vidlive-api-exiftool-check
 ```
 
 如果已经从 iPhone 原生实况照片拿到静态图模板，可以挂载模板目录并启用照片侧 MakerNote 复制：
 
 ```bash
-docker run -d --name vidlive-api-poc -p 3011:3001 -e API_HOST=0.0.0.0 -e API_PORT=3001 -e UPLOAD_DIR=/tmp/vidlive/uploads -e LIVE_PHOTO_TEMPLATE_IMAGE_PATH=/tmp/vidlive/reference/IMG_3579.JPG -v ./tmp/iphone-livephoto-reference:/tmp/vidlive/reference:ro vidlive-api-exiftool-check
+docker run -d --name vidlive-api-poc -p 3011:8000 -e API_HOST=0.0.0.0 -e API_PORT=8000 -e UPLOAD_DIR=/tmp/vidlive/uploads -e LIVE_PHOTO_TEMPLATE_IMAGE_PATH=/tmp/vidlive/reference/IMG_3579.JPG -v ./tmp/iphone-livephoto-reference:/tmp/vidlive/reference:ro vidlive-api-exiftool-check
 ```
 
 检查环境：
@@ -113,7 +113,7 @@ curl http://127.0.0.1:3011/api/phase0/environment
 
 ## iPhone 真机测试
 
-手机不能访问电脑上的 `localhost:3001`，因为那是 iPhone 自己。推荐手机只访问 Web，由 Web 同源代理转发 API。
+手机不能访问电脑上的 `localhost:8000`，因为那是 iPhone 自己。推荐手机只访问 Web，由 Web 同源代理转发 API。
 
 生产构建后启动 Web：
 

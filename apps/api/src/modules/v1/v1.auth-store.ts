@@ -22,6 +22,40 @@ export interface CreateUserRecordInput {
   dailyQuota: number;
 }
 
+export type EmailVerificationPurpose = 'register' | 'login' | 'reset-password';
+
+export interface StoredEmailVerificationCodeRecord {
+  id: string;
+  email: string;
+  purpose: EmailVerificationPurpose;
+  codeHash: string;
+  expiresAt: string;
+  consumedAt: string | null;
+  attemptCount: number;
+  requestIpHash: string;
+  userAgentHash: string;
+  createdAt: string;
+}
+
+export interface CreateEmailVerificationCodeRecordInput {
+  id: string;
+  email: string;
+  purpose: EmailVerificationPurpose;
+  codeHash: string;
+  expiresAt: Date;
+  requestIpHash: string;
+  userAgentHash: string;
+}
+
+export interface KnownAuthDeviceRecord {
+  userId: string;
+  deviceHash: string;
+  requestIpHash: string;
+  userAgentHash: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
 type UserRow = {
   id: string;
   email: string;
@@ -33,6 +67,28 @@ type UserRow = {
   failed_login_count: number | null;
   locked_until: Date | null;
   last_login_at: Date | null;
+};
+
+type EmailVerificationCodeRow = {
+  id: string;
+  email: string;
+  purpose: string;
+  code_hash: string;
+  expires_at: Date;
+  consumed_at: Date | null;
+  attempt_count: number | null;
+  request_ip_hash: string;
+  user_agent_hash: string;
+  created_at: Date;
+};
+
+type KnownAuthDeviceRow = {
+  user_id: string;
+  device_hash: string;
+  request_ip_hash: string;
+  user_agent_hash: string;
+  first_seen_at: Date;
+  last_seen_at: Date;
 };
 
 export class V1AuthStore {
@@ -159,6 +215,162 @@ export class V1AuthStore {
     return result.rows[0] ? mapUserRow(result.rows[0]) : null;
   }
 
+  async updatePassword(userId: string, passwordHash: string): Promise<StoredUserRecord | null> {
+    const result = await this.pool.query<UserRow>(
+      `update users
+          set password_hash = $2,
+              password_changed_at = now(),
+              failed_login_count = 0,
+              locked_until = null,
+              updated_at = now()
+        where id = $1
+        returning id, email, username, password_hash, plan_type, daily_quota, created_at,
+                  failed_login_count, locked_until, last_login_at`,
+      [userId, passwordHash],
+    );
+
+    return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+  }
+
+  async createEmailVerificationCode(
+    input: CreateEmailVerificationCodeRecordInput,
+  ): Promise<StoredEmailVerificationCodeRecord> {
+    const result = await this.pool.query<EmailVerificationCodeRow>(
+      `insert into email_verification_codes
+        (id, email, purpose, code_hash, expires_at, request_ip_hash, user_agent_hash)
+       values ($1, $2, $3, $4, $5, $6, $7)
+       returning id, email, purpose, code_hash, expires_at, consumed_at, attempt_count,
+                 request_ip_hash, user_agent_hash, created_at`,
+      [input.id, input.email, input.purpose, input.codeHash, input.expiresAt, input.requestIpHash, input.userAgentHash],
+    );
+    const row = result.rows[0];
+
+    if (!row) {
+      throw new Error('Failed to create email verification code.');
+    }
+
+    return mapEmailVerificationCodeRow(row);
+  }
+
+  async expireActiveEmailVerificationCodes(email: string, purpose: EmailVerificationPurpose): Promise<void> {
+    await this.pool.query(
+      `update email_verification_codes
+          set consumed_at = now()
+        where email = $1
+          and purpose = $2
+          and consumed_at is null`,
+      [email, purpose],
+    );
+  }
+
+  async findLatestActiveEmailVerificationCode(
+    email: string,
+    purpose: EmailVerificationPurpose,
+    now: Date,
+  ): Promise<StoredEmailVerificationCodeRecord | null> {
+    const result = await this.pool.query<EmailVerificationCodeRow>(
+      `select id, email, purpose, code_hash, expires_at, consumed_at, attempt_count,
+              request_ip_hash, user_agent_hash, created_at
+         from email_verification_codes
+        where email = $1
+          and purpose = $2
+          and consumed_at is null
+          and expires_at > $3
+        order by created_at desc
+        limit 1`,
+      [email, purpose, now],
+    );
+
+    return result.rows[0] ? mapEmailVerificationCodeRow(result.rows[0]) : null;
+  }
+
+  async markEmailVerificationCodeAttempt(
+    id: string,
+    consumedAt: Date | null,
+  ): Promise<StoredEmailVerificationCodeRecord | null> {
+    const result = await this.pool.query<EmailVerificationCodeRow>(
+      `update email_verification_codes
+          set attempt_count = attempt_count + 1,
+              consumed_at = coalesce($2, consumed_at)
+        where id = $1
+        returning id, email, purpose, code_hash, expires_at, consumed_at, attempt_count,
+                  request_ip_hash, user_agent_hash, created_at`,
+      [id, consumedAt],
+    );
+
+    return result.rows[0] ? mapEmailVerificationCodeRow(result.rows[0]) : null;
+  }
+
+  async countEmailVerificationCodes(input: {
+    email?: string;
+    purpose?: EmailVerificationPurpose;
+    requestIpHash?: string;
+    since: Date;
+  }): Promise<number> {
+    const clauses = ['created_at >= $1'];
+    const values: unknown[] = [input.since];
+
+    if (input.email) {
+      values.push(input.email);
+      clauses.push(`email = $${values.length}`);
+    }
+
+    if (input.purpose) {
+      values.push(input.purpose);
+      clauses.push(`purpose = $${values.length}`);
+    }
+
+    if (input.requestIpHash) {
+      values.push(input.requestIpHash);
+      clauses.push(`request_ip_hash = $${values.length}`);
+    }
+
+    const result = await this.pool.query<{ count: string }>(
+      `select count(*)::text as count from email_verification_codes where ${clauses.join(' and ')}`,
+      values,
+    );
+
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async findKnownDevice(userId: string, deviceHash: string): Promise<KnownAuthDeviceRecord | null> {
+    const result = await this.pool.query<KnownAuthDeviceRow>(
+      `select user_id, device_hash, request_ip_hash, user_agent_hash, first_seen_at, last_seen_at
+         from auth_known_devices
+        where user_id = $1
+          and device_hash = $2
+        limit 1`,
+      [userId, deviceHash],
+    );
+
+    return result.rows[0] ? mapKnownAuthDeviceRow(result.rows[0]) : null;
+  }
+
+  async rememberKnownDevice(input: {
+    userId: string;
+    deviceHash: string;
+    requestIpHash: string;
+    userAgentHash: string;
+  }): Promise<KnownAuthDeviceRecord> {
+    const result = await this.pool.query<KnownAuthDeviceRow>(
+      `insert into auth_known_devices (user_id, device_hash, request_ip_hash, user_agent_hash)
+       values ($1, $2, $3, $4)
+       on conflict (user_id, device_hash)
+       do update set request_ip_hash = excluded.request_ip_hash,
+                     user_agent_hash = excluded.user_agent_hash,
+                     last_seen_at = now()
+       returning user_id, device_hash, request_ip_hash, user_agent_hash, first_seen_at, last_seen_at`,
+      [input.userId, input.deviceHash, input.requestIpHash, input.userAgentHash],
+    );
+    const row = result.rows[0];
+
+    if (!row) {
+      throw new Error('Failed to remember auth device.');
+    }
+
+    return mapKnownAuthDeviceRow(row);
+  }
+
   async recordUsage(userId: string, action: string, metadata: unknown): Promise<void> {
     await this.pool.query('insert into usage_logs (user_id, action, metadata) values ($1, $2, $3)', [
       userId,
@@ -178,6 +390,8 @@ export class V1AuthStore {
       await client.query('begin');
       await ensureUsersTable(client);
       await ensureUsageLogsTable(client);
+      await ensureEmailVerificationCodesTable(client);
+      await ensureKnownAuthDevicesTable(client);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -235,6 +449,51 @@ async function ensureUsageLogsTable(client: PoolClient): Promise<void> {
   await client.query(`create index if not exists idx_usage_user_time on usage_logs (user_id, timestamp)`);
 }
 
+async function ensureEmailVerificationCodesTable(client: PoolClient): Promise<void> {
+  await client.query(`
+    create table if not exists email_verification_codes (
+      id uuid primary key,
+      email text not null,
+      purpose text not null,
+      code_hash text not null,
+      expires_at timestamptz not null,
+      consumed_at timestamptz,
+      attempt_count integer not null default 0,
+      request_ip_hash text not null,
+      user_agent_hash text not null,
+      created_at timestamptz not null default now()
+    )
+  `);
+
+  await client.query(`
+    create index if not exists idx_email_codes_email_purpose_created
+      on email_verification_codes (email, purpose, created_at desc)
+  `);
+  await client.query(`
+    create index if not exists idx_email_codes_ip_created
+      on email_verification_codes (request_ip_hash, created_at desc)
+  `);
+}
+
+async function ensureKnownAuthDevicesTable(client: PoolClient): Promise<void> {
+  await client.query(`
+    create table if not exists auth_known_devices (
+      user_id uuid references users(id) on delete cascade,
+      device_hash text not null,
+      request_ip_hash text not null,
+      user_agent_hash text not null,
+      first_seen_at timestamptz not null default now(),
+      last_seen_at timestamptz not null default now(),
+      primary key (user_id, device_hash)
+    )
+  `);
+
+  await client.query(`
+    create index if not exists idx_auth_known_devices_last_seen
+      on auth_known_devices (user_id, last_seen_at desc)
+  `);
+}
+
 function mapUserRow(row: UserRow): StoredUserRecord {
   return {
     id: row.id,
@@ -247,5 +506,35 @@ function mapUserRow(row: UserRow): StoredUserRecord {
     failedLoginCount: row.failed_login_count ?? 0,
     lockedUntil: row.locked_until?.toISOString() ?? null,
     lastLoginAt: row.last_login_at?.toISOString() ?? null,
+  };
+}
+
+function mapEmailVerificationCodeRow(row: EmailVerificationCodeRow): StoredEmailVerificationCodeRecord {
+  return {
+    id: row.id,
+    email: row.email,
+    purpose: isEmailVerificationPurpose(row.purpose) ? row.purpose : 'register',
+    codeHash: row.code_hash,
+    expiresAt: row.expires_at.toISOString(),
+    consumedAt: row.consumed_at?.toISOString() ?? null,
+    attemptCount: row.attempt_count ?? 0,
+    requestIpHash: row.request_ip_hash,
+    userAgentHash: row.user_agent_hash,
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
+function isEmailVerificationPurpose(value: string): value is EmailVerificationPurpose {
+  return value === 'register' || value === 'login' || value === 'reset-password';
+}
+
+function mapKnownAuthDeviceRow(row: KnownAuthDeviceRow): KnownAuthDeviceRecord {
+  return {
+    userId: row.user_id,
+    deviceHash: row.device_hash,
+    requestIpHash: row.request_ip_hash,
+    userAgentHash: row.user_agent_hash,
+    firstSeenAt: row.first_seen_at.toISOString(),
+    lastSeenAt: row.last_seen_at.toISOString(),
   };
 }

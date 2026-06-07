@@ -1,7 +1,12 @@
 import { createHash, createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { resolve4, resolve6, resolveMx } from 'node:dns/promises';
 import { promisify } from 'node:util';
-import { V1AuthStore, type StoredUserRecord } from './v1.auth-store.js';
+import {
+  V1AuthStore,
+  type EmailVerificationPurpose,
+  type StoredEmailVerificationCodeRecord,
+  type StoredUserRecord,
+} from './v1.auth-store.js';
 
 const scryptAsync = promisify(scrypt);
 const tokenTtlMilliseconds = 3 * 24 * 60 * 60 * 1000;
@@ -10,6 +15,12 @@ const accountLockMilliseconds = 15 * 60 * 1000;
 const loginChallengeTtlMilliseconds = 5 * 60 * 1000;
 const loginChallengeDifficulty = 3;
 const loginChallengePrefix = '0'.repeat(loginChallengeDifficulty);
+const emailCodeTtlMilliseconds = 10 * 60 * 1000;
+const emailCodeCooldownMilliseconds = 60 * 1000;
+const emailCodeEmailHourlyLimit = 5;
+const emailCodeIpHourlyLimit = 20;
+const maxEmailCodeAttempts = 5;
+const loginEmailTicketTtlMilliseconds = 5 * 60 * 1000;
 const emailDomainLookupTimeoutMilliseconds = 3000;
 const emailDomainValidationCacheTtlMilliseconds = 15 * 60 * 1000;
 const freeDailyQuota = 5;
@@ -17,6 +28,19 @@ const proDailyQuota = 100;
 const unlimitedDailyQuota = -1;
 const commonWeakPasswords = new Set(['password', 'password123', '12345678', '123456789', 'qwerty123', 'vidlive123']);
 const emailDomainValidationCache = new Map<string, { canReceiveMail: boolean; expiresAt: number }>();
+
+export interface V1AuthRequestContext {
+  requestIp: string;
+  userAgent: string;
+  deviceId: string;
+}
+
+export interface V1ServiceOptions {
+  emailCodeWebhookUrl?: string | null;
+  emailCodeFrom?: string;
+  emailCodeLogEnabled?: boolean;
+  emailCodeGenerator?: () => string;
+}
 
 export interface V1UserProfile {
   id: string;
@@ -40,6 +64,32 @@ export interface V1AuthChallenge {
   difficulty: number;
   prefix: string;
   expiresAt: string;
+}
+
+export interface V1EmailCodeRequestResult {
+  ok: true;
+  purpose: EmailVerificationPurpose;
+  email: string;
+  expiresAt: string;
+  cooldownSeconds: number;
+  delivery: 'webhook' | 'log';
+  message: string;
+}
+
+export type V1LoginResult =
+  | { user: V1UserProfile; token: string }
+  | {
+      requiresEmailCode: true;
+      loginTicket: string;
+      email: string;
+      expiresAt: string;
+      message: string;
+    };
+
+export interface V1VerifiedLoginResult {
+  user: V1UserProfile;
+  token: string;
+  remember: boolean;
 }
 
 export interface KeyframeRecommendationInput {
@@ -130,6 +180,31 @@ interface LoginChallengeRecord {
   expiresAt: number;
 }
 
+interface StoredEmailVerificationCode extends Omit<StoredEmailVerificationCodeRecord, 'expiresAt' | 'consumedAt' | 'createdAt'> {
+  expiresAt: number;
+  consumedAt: number | null;
+  createdAt: number;
+}
+
+interface KnownAuthDevice {
+  userId: string;
+  deviceHash: string;
+  requestIpHash: string;
+  userAgentHash: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+}
+
+interface LoginEmailTicket {
+  userId: string;
+  email: string;
+  remember: boolean;
+  deviceHash: string;
+  requestIpHash: string;
+  userAgentHash: string;
+  expiresAt: number;
+}
+
 export class V1Service {
   private readonly users = new Map<string, StoredUser>();
   private readonly usersByEmail = new Map<string, StoredUser>();
@@ -140,25 +215,38 @@ export class V1Service {
   private readonly experiments = new Map<string, ExperimentAssignment>();
   private readonly apiKeys = new Map<string, ApiKeyRecord>();
   private readonly loginChallenges = new Map<string, LoginChallengeRecord>();
+  private readonly emailVerificationCodes = new Map<string, StoredEmailVerificationCode>();
+  private readonly knownAuthDevices = new Map<string, KnownAuthDevice>();
+  private readonly loginEmailTickets = new Map<string, LoginEmailTicket>();
 
   private readonly permanentMemberEmails: Set<string>;
+  private readonly emailCodeFrom: string;
+  private readonly emailCodeWebhookUrl: string | null;
+  private readonly emailCodeLogEnabled: boolean;
+  private readonly emailCodeGenerator: () => string;
 
   constructor(
     private readonly jwtSecret: string,
     private readonly authStore: V1AuthStore | null = null,
     permanentMemberEmails: readonly string[] = [],
+    options: V1ServiceOptions = {},
   ) {
     this.permanentMemberEmails = new Set(permanentMemberEmails.map((email) => normalizeEmail(email)).filter(Boolean));
+    this.emailCodeFrom = options.emailCodeFrom ?? 'VidLive <no-reply@vidlive.local>';
+    this.emailCodeWebhookUrl = options.emailCodeWebhookUrl ?? null;
+    this.emailCodeLogEnabled = options.emailCodeLogEnabled ?? process.env.NODE_ENV !== 'production';
+    this.emailCodeGenerator = options.emailCodeGenerator ?? generateEmailCode;
   }
 
   static async create(
     jwtSecret: string,
     databaseUrl: string | null,
     permanentMemberEmails: readonly string[] = [],
+    options: V1ServiceOptions = {},
   ): Promise<V1Service> {
     const authStore = databaseUrl ? await V1AuthStore.connect(databaseUrl) : null;
 
-    return new V1Service(jwtSecret, authStore, permanentMemberEmails);
+    return new V1Service(jwtSecret, authStore, permanentMemberEmails, options);
   }
 
   createLoginChallenge(): V1AuthChallenge {
@@ -184,24 +272,91 @@ export class V1Service {
     };
   }
 
-  async register(input: { email: string; password: string; username: string }): Promise<{ user: V1UserProfile }> {
+  async requestEmailCode(input: {
+    email: string;
+    purpose: EmailVerificationPurpose;
+    username?: string;
+    password?: string;
+    context: V1AuthRequestContext;
+  }): Promise<V1EmailCodeRequestResult> {
+    const purpose = input.purpose;
+
+    if (purpose === 'login') {
+      throw new V1Error('unsupported-email-code-purpose', '登录验证码会在密码校验通过后自动发送。');
+    }
+
+    const email = normalizeEmail(input.email);
+
+    if (!isValidEmail(email)) {
+      throw new V1Error('invalid-email', '请输入有效邮箱地址。');
+    }
+
+    await assertEmailDomainCanReceiveMail(email);
+
+    if (purpose === 'register') {
+      const registration = validateRegistrationInput({
+        email,
+        username: input.username ?? '',
+        password: input.password ?? '',
+      });
+      const existingEmail = await this.findUserByEmail(registration.email);
+
+      if (existingEmail) {
+        throw new V1Error('email-already-registered', '该邮箱已注册，请直接登录。');
+      }
+
+      if (await this.isUsernameTaken(registration.username)) {
+        throw new V1Error('username-already-registered', '该用户名已被占用，请换一个。');
+      }
+    }
+
+    if (purpose === 'reset-password') {
+      const user = await this.findUserByEmail(email);
+
+      if (!user) {
+        return {
+          ok: true,
+          purpose,
+          email,
+          expiresAt: new Date(Date.now() + emailCodeTtlMilliseconds).toISOString(),
+          cooldownSeconds: Math.ceil(emailCodeCooldownMilliseconds / 1000),
+          delivery: this.emailCodeWebhookUrl ? 'webhook' : 'log',
+          message: '如果该邮箱已注册，验证码会发送到对应邮箱。',
+        };
+      }
+    }
+
+    return this.issueEmailCode({
+      email,
+      purpose,
+      context: input.context,
+    });
+  }
+
+  async register(input: {
+    email: string;
+    password: string;
+    username: string;
+    emailCode?: string;
+    context?: V1AuthRequestContext;
+  }): Promise<{ user: V1UserProfile }> {
     const registration = validateRegistrationInput(input);
     await assertEmailDomainCanReceiveMail(registration.email);
-    const existingEmail = this.authStore
-      ? await this.authStore.findUserByEmail(registration.email)
-      : this.usersByEmail.get(registration.email);
+    const existingEmail = await this.findUserByEmail(registration.email);
 
     if (existingEmail) {
       throw new V1Error('email-already-registered', '该邮箱已注册，请直接登录。');
     }
 
-    const usernameTaken = this.authStore
-      ? await this.authStore.usernameExists(registration.username)
-      : [...this.users.values()].some((user) => user.username.toLowerCase() === registration.username.toLowerCase());
-
-    if (usernameTaken) {
+    if (await this.isUsernameTaken(registration.username)) {
       throw new V1Error('username-already-registered', '该用户名已被占用，请换一个。');
     }
+
+    await this.verifyEmailCode({
+      email: registration.email,
+      purpose: 'register',
+      code: input.emailCode ?? '',
+    });
 
     const passwordHash = await hashPassword(registration.password);
     const initialPlan = this.resolveEntitledPlan(registration.email, 'free', freeDailyQuota);
@@ -226,6 +381,7 @@ export class V1Service {
 
     const entitledUser = this.applyUserEntitlements(user);
     this.cacheUser(entitledUser);
+    await this.rememberKnownDeviceForContext(entitledUser, input.context);
     this.recordUsage(entitledUser.id, 'user.registered', {});
 
     return {
@@ -236,15 +392,15 @@ export class V1Service {
   async login(input: {
     email: string;
     password: string;
+    remember?: boolean;
     challengeId?: string;
     challengeAnswer?: string;
     automationTrap?: string;
-  }): Promise<{ user: V1UserProfile; token: string }> {
+    context?: V1AuthRequestContext;
+  }): Promise<V1LoginResult> {
     const credentials = validateLoginInput(input);
     this.verifyLoginChallenge(input);
-    const storedUser = this.authStore
-      ? await this.authStore.findUserByEmail(credentials.email)
-      : this.usersByEmail.get(credentials.email) ?? null;
+    const storedUser = await this.findUserByEmail(credentials.email);
 
     if (!storedUser) {
       await delayInvalidLogin();
@@ -269,6 +425,110 @@ export class V1Service {
       throw new V1Error('invalid-credentials', '邮箱或密码不正确。');
     }
 
+    if (input.context && (await this.shouldRequireLoginEmailCode(user, input.context))) {
+      return this.createLoginEmailChallenge(user, input.remember === true, input.context);
+    }
+
+    return this.completeLogin(user, input.context);
+  }
+
+  async verifyLoginEmailCode(input: {
+    loginTicket: string;
+    emailCode: string;
+    context?: V1AuthRequestContext;
+  }): Promise<V1VerifiedLoginResult> {
+    this.pruneExpiredLoginEmailTickets();
+
+    const loginTicket = input.loginTicket.trim();
+    const ticket = this.loginEmailTickets.get(loginTicket);
+    this.loginEmailTickets.delete(loginTicket);
+
+    if (!ticket || ticket.expiresAt <= Date.now()) {
+      throw new V1Error('login-ticket-expired', '登录验证已过期，请重新登录。');
+    }
+
+    if (input.context) {
+      const requestIpHash = this.hashAuthContext('ip', input.context.requestIp);
+      const userAgentHash = this.hashAuthContext('ua', input.context.userAgent);
+
+      if (ticket.requestIpHash !== requestIpHash || ticket.userAgentHash !== userAgentHash) {
+        throw new V1Error('login-ticket-context-mismatch', '登录环境已变化，请重新登录。');
+      }
+    }
+
+    await this.verifyEmailCode({
+      email: ticket.email,
+      purpose: 'login',
+      code: input.emailCode,
+    });
+
+    const user = await this.findUserById(ticket.userId);
+
+    if (!user) {
+      throw new V1Error('user-not-found', '未找到对应的 VidLive 账号。');
+    }
+
+    const result = await this.completeLogin(user, input.context, ticket);
+
+    return {
+      ...result,
+      remember: ticket.remember,
+    };
+  }
+
+  async resetPassword(input: {
+    email: string;
+    password: string;
+    emailCode: string;
+  }): Promise<{ ok: true; message: string }> {
+    const email = normalizeEmail(input.email);
+
+    if (!isValidEmail(email)) {
+      throw new V1Error('invalid-email', '请输入有效邮箱地址。');
+    }
+
+    const user = await this.findUserByEmail(email);
+
+    if (!user) {
+      throw new V1Error('invalid-email-code', '验证码无效或已过期。');
+    }
+
+    const passwordError = getPasswordValidationError(input.password, email, user.username);
+
+    if (passwordError) {
+      throw new V1Error('weak-password', passwordError);
+    }
+
+    await this.verifyEmailCode({
+      email,
+      purpose: 'reset-password',
+      code: input.emailCode,
+    });
+
+    const passwordHash = await hashPassword(input.password);
+    const nextUser = this.authStore
+      ? toStoredUser((await this.authStore.updatePassword(user.id, passwordHash)) ?? user)
+      : {
+          ...user,
+          passwordHash,
+          failedLoginCount: 0,
+          lockedUntil: null,
+        };
+
+    this.cacheUser(this.applyUserEntitlements(nextUser));
+    this.recordUsage(nextUser.id, 'user.password_reset', {});
+
+    return {
+      ok: true,
+      message: '密码已重置，请使用新密码登录。',
+    };
+  }
+
+  private async completeLogin(
+    user: StoredUser,
+    context?: V1AuthRequestContext,
+    rememberedTicket?: Pick<LoginEmailTicket, 'deviceHash' | 'requestIpHash' | 'userAgentHash'>,
+  ): Promise<{ user: V1UserProfile; token: string }> {
     const nextUser = this.authStore ? toStoredUser((await this.authStore.markLoginSuccess(user.id)) ?? user) : user;
 
     nextUser.failedLoginCount = 0;
@@ -276,6 +536,7 @@ export class V1Service {
     nextUser.lastLoginAt = new Date().toISOString();
     const entitledUser = this.applyUserEntitlements(nextUser);
     this.cacheUser(entitledUser);
+    await this.rememberKnownDeviceForContext(entitledUser, context, rememberedTicket);
     this.recordUsage(entitledUser.id, 'user.logged_in', {});
 
     return {
@@ -329,6 +590,404 @@ export class V1Service {
   private cacheUser(user: StoredUser): void {
     this.users.set(user.id, user);
     this.usersByEmail.set(user.email, user);
+  }
+
+  private async findUserByEmail(email: string): Promise<StoredUser | null> {
+    const storedUser = this.authStore ? await this.authStore.findUserByEmail(email) : this.usersByEmail.get(email) ?? null;
+
+    return storedUser ? toStoredUser(storedUser) : null;
+  }
+
+  private async findUserById(userId: string): Promise<StoredUser | null> {
+    const storedUser = this.authStore ? await this.authStore.findUserById(userId) : this.users.get(userId) ?? null;
+
+    return storedUser ? toStoredUser(storedUser) : null;
+  }
+
+  private async isUsernameTaken(username: string): Promise<boolean> {
+    return this.authStore
+      ? this.authStore.usernameExists(username)
+      : [...this.users.values()].some((user) => user.username.toLowerCase() === username.toLowerCase());
+  }
+
+  private async issueEmailCode(input: {
+    email: string;
+    purpose: EmailVerificationPurpose;
+    context: V1AuthRequestContext;
+  }): Promise<V1EmailCodeRequestResult> {
+    this.pruneExpiredEmailVerificationCodes();
+
+    const now = Date.now();
+    const requestIpHash = this.hashAuthContext('ip', input.context.requestIp);
+    const userAgentHash = this.hashAuthContext('ua', input.context.userAgent);
+    const recentEmailCodes = await this.countEmailCodes({
+      email: input.email,
+      purpose: input.purpose,
+      since: now - emailCodeCooldownMilliseconds,
+    });
+
+    if (recentEmailCodes > 0) {
+      throw new V1Error('email-code-cooldown', '验证码发送过于频繁，请稍后再试。');
+    }
+
+    const hourlyEmailCodes = await this.countEmailCodes({
+      email: input.email,
+      purpose: input.purpose,
+      since: now - 60 * 60 * 1000,
+    });
+
+    if (hourlyEmailCodes >= emailCodeEmailHourlyLimit) {
+      throw new V1Error('email-code-email-rate-limited', '该邮箱验证码请求过多，请稍后再试。');
+    }
+
+    const hourlyIpCodes = await this.countEmailCodes({
+      requestIpHash,
+      since: now - 60 * 60 * 1000,
+    });
+
+    if (hourlyIpCodes >= emailCodeIpHourlyLimit) {
+      throw new V1Error('email-code-ip-rate-limited', '当前网络验证码请求过多，请稍后再试。');
+    }
+
+    await this.expireActiveEmailCodes(input.email, input.purpose);
+
+    const code = normalizeEmailCode(this.emailCodeGenerator());
+    const expiresAt = new Date(now + emailCodeTtlMilliseconds);
+    const record: StoredEmailVerificationCode = {
+      id: randomUUID(),
+      email: input.email,
+      purpose: input.purpose,
+      codeHash: hashEmailCode(this.jwtSecret, input.email, input.purpose, code),
+      expiresAt: expiresAt.getTime(),
+      consumedAt: null,
+      attemptCount: 0,
+      requestIpHash,
+      userAgentHash,
+      createdAt: now,
+    };
+
+    if (this.authStore) {
+      const storedRecord = await this.authStore.createEmailVerificationCode({
+        id: record.id,
+        email: record.email,
+        purpose: record.purpose,
+        codeHash: record.codeHash,
+        expiresAt,
+        requestIpHash,
+        userAgentHash,
+      });
+      this.emailVerificationCodes.set(record.id, toStoredEmailVerificationCode(storedRecord));
+    } else {
+      this.emailVerificationCodes.set(record.id, record);
+    }
+
+    const delivery = await this.sendEmailCode({
+      email: input.email,
+      purpose: input.purpose,
+      code,
+      expiresAt,
+    });
+
+    return {
+      ok: true,
+      purpose: input.purpose,
+      email: input.email,
+      expiresAt: expiresAt.toISOString(),
+      cooldownSeconds: Math.ceil(emailCodeCooldownMilliseconds / 1000),
+      delivery,
+      message: '验证码已发送，请在 10 分钟内完成验证。',
+    };
+  }
+
+  private async sendEmailCode(input: {
+    email: string;
+    purpose: EmailVerificationPurpose;
+    code: string;
+    expiresAt: Date;
+  }): Promise<'webhook' | 'log'> {
+    const subject = getEmailCodeSubject(input.purpose);
+    const text = [
+      `${subject}`,
+      '',
+      `验证码：${input.code}`,
+      `有效期至：${input.expiresAt.toLocaleString('zh-CN')}`,
+      '',
+      '如果不是你本人操作，请忽略这封邮件。',
+    ].join('\n');
+
+    if (this.emailCodeWebhookUrl) {
+      const response = await fetch(this.emailCodeWebhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: this.emailCodeFrom,
+          to: input.email,
+          purpose: input.purpose,
+          subject,
+          text,
+          code: input.code,
+          expiresAt: input.expiresAt.toISOString(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new V1Error('email-code-delivery-failed', '验证码邮件发送失败，请稍后再试。');
+      }
+
+      return 'webhook';
+    }
+
+    if (!this.emailCodeLogEnabled) {
+      throw new V1Error('email-code-delivery-not-configured', '验证码邮件服务未配置，请联系管理员。');
+    }
+
+    console.info('[VidLive email code]', {
+      to: input.email,
+      purpose: input.purpose,
+      code: input.code,
+      expiresAt: input.expiresAt.toISOString(),
+    });
+
+    return 'log';
+  }
+
+  private async verifyEmailCode(input: {
+    email: string;
+    purpose: EmailVerificationPurpose;
+    code: string;
+  }): Promise<void> {
+    const code = input.code.trim();
+
+    if (!/^\d{6}$/u.test(code)) {
+      throw new V1Error('invalid-email-code', '请输入 6 位邮箱验证码。');
+    }
+
+    const record = await this.findLatestActiveEmailCode(input.email, input.purpose);
+
+    if (!record || record.attemptCount >= maxEmailCodeAttempts) {
+      throw new V1Error('invalid-email-code', '验证码无效或已过期。');
+    }
+
+    const expectedHash = hashEmailCode(this.jwtSecret, input.email, input.purpose, code);
+    const matched = timingSafeHexEqual(expectedHash, record.codeHash);
+    const shouldConsume = matched || record.attemptCount + 1 >= maxEmailCodeAttempts;
+
+    await this.markEmailCodeAttempt(record.id, shouldConsume ? new Date() : null);
+
+    if (!matched) {
+      throw new V1Error('invalid-email-code', '验证码无效或已过期。');
+    }
+  }
+
+  private async findLatestActiveEmailCode(
+    email: string,
+    purpose: EmailVerificationPurpose,
+  ): Promise<StoredEmailVerificationCode | null> {
+    const now = Date.now();
+
+    if (this.authStore) {
+      const record = await this.authStore.findLatestActiveEmailVerificationCode(email, purpose, new Date(now));
+
+      return record ? toStoredEmailVerificationCode(record) : null;
+    }
+
+    const activeRecords = [...this.emailVerificationCodes.values()]
+      .filter((record) => {
+        return record.email === email && record.purpose === purpose && record.consumedAt === null && record.expiresAt > now;
+      })
+      .sort((left, right) => right.createdAt - left.createdAt);
+
+    return activeRecords[0] ?? null;
+  }
+
+  private async markEmailCodeAttempt(id: string, consumedAt: Date | null): Promise<void> {
+    if (this.authStore) {
+      const record = await this.authStore.markEmailVerificationCodeAttempt(id, consumedAt);
+
+      if (record) {
+        this.emailVerificationCodes.set(record.id, toStoredEmailVerificationCode(record));
+      }
+
+      return;
+    }
+
+    const record = this.emailVerificationCodes.get(id);
+
+    if (!record) {
+      return;
+    }
+
+    record.attemptCount += 1;
+    record.consumedAt = consumedAt ? consumedAt.getTime() : record.consumedAt;
+  }
+
+  private async expireActiveEmailCodes(email: string, purpose: EmailVerificationPurpose): Promise<void> {
+    if (this.authStore) {
+      await this.authStore.expireActiveEmailVerificationCodes(email, purpose);
+    }
+
+    const now = Date.now();
+
+    for (const record of this.emailVerificationCodes.values()) {
+      if (record.email === email && record.purpose === purpose && record.consumedAt === null) {
+        record.consumedAt = now;
+      }
+    }
+  }
+
+  private async countEmailCodes(input: {
+    email?: string;
+    purpose?: EmailVerificationPurpose;
+    requestIpHash?: string;
+    since: number;
+  }): Promise<number> {
+    if (this.authStore) {
+      const storeInput: {
+        email?: string;
+        purpose?: EmailVerificationPurpose;
+        requestIpHash?: string;
+        since: Date;
+      } = {
+        since: new Date(input.since),
+      };
+
+      if (input.email !== undefined) {
+        storeInput.email = input.email;
+      }
+
+      if (input.purpose !== undefined) {
+        storeInput.purpose = input.purpose;
+      }
+
+      if (input.requestIpHash !== undefined) {
+        storeInput.requestIpHash = input.requestIpHash;
+      }
+
+      return this.authStore.countEmailVerificationCodes(storeInput);
+    }
+
+    return [...this.emailVerificationCodes.values()].filter((record) => {
+      return (
+        record.createdAt >= input.since &&
+        (!input.email || record.email === input.email) &&
+        (!input.purpose || record.purpose === input.purpose) &&
+        (!input.requestIpHash || record.requestIpHash === input.requestIpHash)
+      );
+    }).length;
+  }
+
+  private pruneExpiredEmailVerificationCodes(): void {
+    if (this.authStore) {
+      return;
+    }
+
+    const now = Date.now();
+
+    for (const [id, record] of this.emailVerificationCodes.entries()) {
+      if (record.expiresAt <= now || (record.consumedAt !== null && now - record.consumedAt > emailCodeTtlMilliseconds)) {
+        this.emailVerificationCodes.delete(id);
+      }
+    }
+  }
+
+  private async shouldRequireLoginEmailCode(user: StoredUser, context: V1AuthRequestContext): Promise<boolean> {
+    if (user.failedLoginCount > 0) {
+      return true;
+    }
+
+    const deviceHash = this.hashAuthContext('device', context.deviceId);
+
+    if (this.authStore) {
+      return !(await this.authStore.findKnownDevice(user.id, deviceHash));
+    }
+
+    return !this.knownAuthDevices.has(createKnownDeviceKey(user.id, deviceHash));
+  }
+
+  private async createLoginEmailChallenge(
+    user: StoredUser,
+    remember: boolean,
+    context: V1AuthRequestContext,
+  ): Promise<Extract<V1LoginResult, { requiresEmailCode: true }>> {
+    const deviceHash = this.hashAuthContext('device', context.deviceId);
+    const requestIpHash = this.hashAuthContext('ip', context.requestIp);
+    const userAgentHash = this.hashAuthContext('ua', context.userAgent);
+    const expiresAt = Date.now() + loginEmailTicketTtlMilliseconds;
+    const loginTicket = randomBytes(24).toString('base64url');
+
+    await this.issueEmailCode({
+      email: user.email,
+      purpose: 'login',
+      context,
+    });
+
+    this.loginEmailTickets.set(loginTicket, {
+      userId: user.id,
+      email: user.email,
+      remember,
+      deviceHash,
+      requestIpHash,
+      userAgentHash,
+      expiresAt,
+    });
+
+    return {
+      requiresEmailCode: true,
+      loginTicket,
+      email: user.email,
+      expiresAt: new Date(expiresAt).toISOString(),
+      message: '检测到新的登录环境，请输入邮箱验证码完成登录。',
+    };
+  }
+
+  private pruneExpiredLoginEmailTickets(): void {
+    const now = Date.now();
+
+    for (const [id, ticket] of this.loginEmailTickets.entries()) {
+      if (ticket.expiresAt <= now) {
+        this.loginEmailTickets.delete(id);
+      }
+    }
+  }
+
+  private async rememberKnownDeviceForContext(
+    user: StoredUser,
+    context?: V1AuthRequestContext,
+    rememberedTicket?: Pick<LoginEmailTicket, 'deviceHash' | 'requestIpHash' | 'userAgentHash'>,
+  ): Promise<void> {
+    const deviceHash = rememberedTicket?.deviceHash ?? (context ? this.hashAuthContext('device', context.deviceId) : null);
+
+    if (!deviceHash) {
+      return;
+    }
+
+    const requestIpHash = rememberedTicket?.requestIpHash ?? this.hashAuthContext('ip', context?.requestIp ?? '');
+    const userAgentHash = rememberedTicket?.userAgentHash ?? this.hashAuthContext('ua', context?.userAgent ?? '');
+    const now = Date.now();
+
+    if (this.authStore) {
+      await this.authStore.rememberKnownDevice({
+        userId: user.id,
+        deviceHash,
+        requestIpHash,
+        userAgentHash,
+      });
+    }
+
+    this.knownAuthDevices.set(createKnownDeviceKey(user.id, deviceHash), {
+      userId: user.id,
+      deviceHash,
+      requestIpHash,
+      userAgentHash,
+      firstSeenAt: now,
+      lastSeenAt: now,
+    });
+  }
+
+  private hashAuthContext(kind: 'device' | 'ip' | 'ua', value: string): string {
+    return createHmac('sha256', this.jwtSecret).update(`${kind}:${value}`).digest('hex');
   }
 
   private async recordLoginFailure(user: StoredUser): Promise<void> {
@@ -1036,6 +1695,36 @@ async function verifyPassword(password: string, encodedHash: string): Promise<bo
   return timingSafeHexEqual(hash.toString('hex'), expectedHash);
 }
 
+function generateEmailCode(): string {
+  return randomBytes(4).readUInt32BE(0).toString().padStart(10, '0').slice(0, 6);
+}
+
+function normalizeEmailCode(value: string): string {
+  const code = value.trim();
+
+  if (!/^\d{6}$/u.test(code)) {
+    throw new V1Error('invalid-email-code-generator', '邮箱验证码生成器必须返回 6 位数字。');
+  }
+
+  return code;
+}
+
+function hashEmailCode(secret: string, email: string, purpose: EmailVerificationPurpose, code: string): string {
+  return createHmac('sha256', secret).update(`${purpose}:${normalizeEmail(email)}:${code}`).digest('hex');
+}
+
+function getEmailCodeSubject(purpose: EmailVerificationPurpose): string {
+  if (purpose === 'register') {
+    return 'VidLive 注册邮箱验证码';
+  }
+
+  if (purpose === 'login') {
+    return 'VidLive 登录邮箱验证码';
+  }
+
+  return 'VidLive 重置密码验证码';
+}
+
 function validateRegistrationInput(input: { email: string; password: string; username: string }): {
   email: string;
   password: string;
@@ -1269,6 +1958,25 @@ function toStoredUser(record: StoredUserRecord): StoredUser {
     lockedUntil: record.lockedUntil,
     lastLoginAt: record.lastLoginAt,
   };
+}
+
+function toStoredEmailVerificationCode(record: StoredEmailVerificationCodeRecord): StoredEmailVerificationCode {
+  return {
+    id: record.id,
+    email: record.email,
+    purpose: record.purpose,
+    codeHash: record.codeHash,
+    expiresAt: Date.parse(record.expiresAt),
+    consumedAt: record.consumedAt ? Date.parse(record.consumedAt) : null,
+    attemptCount: record.attemptCount,
+    requestIpHash: record.requestIpHash,
+    userAgentHash: record.userAgentHash,
+    createdAt: Date.parse(record.createdAt),
+  };
+}
+
+function createKnownDeviceKey(userId: string, deviceHash: string): string {
+  return `${userId}:${deviceHash}`;
 }
 
 function sign(payload: string, secret: string): string {

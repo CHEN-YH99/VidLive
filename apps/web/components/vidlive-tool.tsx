@@ -129,7 +129,7 @@ const presetHelpText: Record<ExportPresetId, string> = {
 
 type CloudJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'expired' | 'deleted';
 type GenerationStatus = 'generating' | 'complete' | 'failed';
-type AuthMode = 'login' | 'register';
+type AuthMode = 'login' | 'register' | 'reset-password';
 
 interface CloudJob {
   id: string;
@@ -2699,6 +2699,7 @@ interface AuthFieldErrors {
   email?: string;
   username?: string;
   password?: string;
+  emailCode?: string;
 }
 
 interface PasswordRuleState {
@@ -2715,7 +2716,34 @@ interface AuthChallenge {
   expiresAt: string;
 }
 
-function validateAuthForm(mode: AuthMode, email: string, username: string, password: string): AuthFieldErrors {
+interface AuthLoginEmailTicket {
+  ticket: string;
+  email: string;
+  expiresAt: string;
+}
+
+interface AuthEmailCodeResponse {
+  ok?: boolean;
+  cooldownSeconds?: number;
+  message?: string;
+}
+
+interface AuthLoginEmailCodeRequiredResponse {
+  requiresEmailCode: true;
+  loginTicket: string;
+  email: string;
+  expiresAt: string;
+  message?: string;
+}
+
+function validateAuthForm(
+  mode: AuthMode,
+  email: string,
+  username: string,
+  password: string,
+  emailCode: string,
+  requireEmailCode: boolean,
+): AuthFieldErrors {
   const errors: AuthFieldErrors = {};
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedUsername = username.trim();
@@ -2733,6 +2761,35 @@ function validateAuthForm(mode: AuthMode, email: string, username: string, passw
       errors.password = '请输入密码。';
     }
   } else {
+    const passwordUsername = mode === 'register' ? normalizedUsername : '';
+    const failedRule = getPasswordRules(password, normalizedEmail, passwordUsername).find((rule) => !rule.passed);
+
+    if (failedRule) {
+      errors.password = failedRule.label;
+    }
+  }
+
+  if (requireEmailCode && !/^\d{6}$/u.test(emailCode.trim())) {
+    errors.emailCode = '请输入 6 位邮箱验证码。';
+  }
+
+  return errors;
+}
+
+function validateAuthEmailCodeRequest(mode: AuthMode, email: string, username: string, password: string): AuthFieldErrors {
+  const errors: AuthFieldErrors = {};
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedUsername = username.trim();
+
+  if (!isValidAuthEmail(normalizedEmail)) {
+    errors.email = '请输入有效邮箱。';
+  }
+
+  if (mode === 'register') {
+    if (!/^[\p{L}\p{N}_-]{2,32}$/u.test(normalizedUsername)) {
+      errors.username = '用户名需为 2-32 位，可用中英文、数字、下划线或短横线。';
+    }
+
     const failedRule = getPasswordRules(password, normalizedEmail, normalizedUsername).find((rule) => !rule.passed);
 
     if (failedRule) {
@@ -2866,13 +2923,37 @@ function AuthDialog({
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [loginEmailTicket, setLoginEmailTicket] = useState<AuthLoginEmailTicket | null>(null);
   const [rememberLogin, setRememberLogin] = useState(false);
   const [automationTrap, setAutomationTrap] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const fieldErrors = useMemo(() => validateAuthForm(mode, email, username, password), [email, mode, password, username]);
-  const passwordRules = useMemo(() => getPasswordRules(password, email.trim().toLowerCase(), username.trim()), [email, password, username]);
+  const [isSendingEmailCode, setIsSendingEmailCode] = useState(false);
+  const [emailCodeCooldown, setEmailCodeCooldown] = useState(0);
+  const requiresEmailCode = mode !== 'login' || Boolean(loginEmailTicket);
+  const fieldErrors = useMemo(
+    () => validateAuthForm(mode, email, username, password, emailCode, requiresEmailCode),
+    [email, emailCode, mode, password, requiresEmailCode, username],
+  );
+  const passwordRules = useMemo(
+    () => getPasswordRules(password, email.trim().toLowerCase(), mode === 'register' ? username.trim() : ''),
+    [email, mode, password, username],
+  );
+  const isEmailCodeComplete = /^\d{6}$/u.test(emailCode.trim());
   const canSubmit = Object.keys(fieldErrors).length === 0;
+  const resetAuthTransientState = useCallback(() => {
+    setEmailCode('');
+    setLoginEmailTicket(null);
+    setEmailCodeCooldown(0);
+    setStatus(null);
+    setIsSubmitting(false);
+    setIsSendingEmailCode(false);
+  }, []);
+  const closeAuthDialog = useCallback(() => {
+    resetAuthTransientState();
+    onOpenChange(false);
+  }, [onOpenChange, resetAuthTransientState]);
 
   useEffect(() => {
     if (!open) {
@@ -2881,7 +2962,7 @@ function AuthDialog({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onOpenChange(false);
+        closeAuthDialog();
       }
     };
 
@@ -2890,15 +2971,104 @@ function AuthDialog({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [onOpenChange, open]);
+  }, [closeAuthDialog, open]);
+
+  useEffect(() => {
+    if (emailCodeCooldown <= 0) {
+      return undefined;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setEmailCodeCooldown((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [emailCodeCooldown]);
 
   if (!open) {
     return null;
   }
 
+  const switchAuthMode = (nextMode: AuthMode) => {
+    setMode(nextMode);
+    resetAuthTransientState();
+    setAutomationTrap('');
+  };
+
+  const handleEmailChange = (value: string) => {
+    setEmail(value);
+    setEmailCode('');
+    setLoginEmailTicket(null);
+  };
+
+  const handlePasswordChange = (value: string) => {
+    setPassword(value);
+    setLoginEmailTicket(null);
+  };
+
+  const requestEmailCode = async () => {
+    if (mode === 'login') {
+      return;
+    }
+
+    const nextErrors = validateAuthEmailCodeRequest(mode, email, username, password);
+
+    if (Object.keys(nextErrors).length > 0) {
+      setStatus(Object.values(nextErrors)[0] ?? '请检查表单。');
+      return;
+    }
+
+    setIsSendingEmailCode(true);
+    setStatus(null);
+
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+      const requestBody: {
+        email: string;
+        purpose: 'register' | 'reset-password';
+        username?: string;
+        password?: string;
+      } = {
+        email: normalizedEmail,
+        purpose: mode === 'register' ? 'register' : 'reset-password',
+      };
+
+      if (mode === 'register') {
+        requestBody.username = username.trim();
+        requestBody.password = password;
+      }
+
+      const response = await fetch(toApiUrl('/api/v1/auth/email-codes'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+      const payload = (await response.json().catch(() => null)) as AuthEmailCodeResponse | null;
+
+      if (!response.ok) {
+        setStatus(payload?.message ?? '验证码发送失败');
+        return;
+      }
+
+      setEmail(normalizedEmail);
+      setEmailCode('');
+      setEmailCodeCooldown(payload?.cooldownSeconds ?? 60);
+      setStatus(payload?.message ?? '验证码已发送，请查看邮箱。');
+    } catch {
+      setStatus('验证码服务不可用');
+    } finally {
+      setIsSendingEmailCode(false);
+    }
+  };
+
   const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const nextErrors = validateAuthForm(mode, email, username, password);
+    const nextErrors = validateAuthForm(mode, email, username, password, emailCode, requiresEmailCode);
 
     if (Object.keys(nextErrors).length > 0) {
       setStatus(Object.values(nextErrors)[0] ?? '请检查表单。');
@@ -2910,26 +3080,129 @@ function AuthDialog({
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
+      const trimmedEmailCode = emailCode.trim();
+
+      if (loginEmailTicket) {
+        const response = await fetch(toApiUrl('/api/v1/auth/login/email-code'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            loginTicket: loginEmailTicket.ticket,
+            emailCode: trimmedEmailCode,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { user?: AuthUser; token?: string; message?: string }
+          | null;
+
+        if (!response.ok || !payload?.user || !payload.token) {
+          setStatus(payload?.message ?? '邮箱验证码校验失败');
+          return;
+        }
+
+        onAuthSuccess({
+          user: payload.user,
+          token: payload.token,
+        });
+        setPassword('');
+        setEmailCode('');
+        setLoginEmailTicket(null);
+        return;
+      }
+
+      if (mode === 'reset-password') {
+        const response = await fetch(toApiUrl('/api/v1/auth/reset-password'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email: normalizedEmail,
+            password,
+            emailCode: trimmedEmailCode,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null;
+
+        if (!response.ok || !payload?.ok) {
+          setStatus(payload?.message ?? '密码重置失败');
+          return;
+        }
+
+        setMode('login');
+        setPassword('');
+        setEmailCode('');
+        setLoginEmailTicket(null);
+        setStatus(payload.message ?? '密码已重置，请使用新密码登录。');
+        return;
+      }
+
       const challengeProof = mode === 'login' ? await createLoginChallengeProof() : null;
+      const authRequestBody: {
+        email: string;
+        password: string;
+        username?: string;
+        emailCode?: string;
+        remember?: boolean;
+        challengeId?: string;
+        challengeAnswer?: string;
+        automationTrap?: string;
+      } = {
+        email: normalizedEmail,
+        password,
+      };
+
+      if (mode === 'register') {
+        authRequestBody.username = username.trim();
+        authRequestBody.emailCode = trimmedEmailCode;
+      }
+
+      if (mode === 'login') {
+        authRequestBody.remember = rememberLogin;
+      }
+
+      if (challengeProof) {
+        authRequestBody.challengeId = challengeProof.challengeId;
+        authRequestBody.challengeAnswer = challengeProof.challengeAnswer;
+      }
+
+      if (automationTrap) {
+        authRequestBody.automationTrap = automationTrap;
+      }
+
       const response = await fetch(toApiUrl(mode === 'register' ? '/api/v1/auth/register' : '/api/v1/auth/login'), {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          email: normalizedEmail,
-          password,
-          username: mode === 'register' ? username.trim() : undefined,
-          remember: mode === 'login' ? rememberLogin : undefined,
-          challengeId: challengeProof?.challengeId,
-          challengeAnswer: challengeProof?.challengeAnswer,
-          automationTrap,
-        }),
+        body: JSON.stringify(authRequestBody),
       });
       const payload = (await response.json().catch(() => null)) as
-        | { user?: AuthUser; token?: string; message?: string }
+        | ({ user?: AuthUser; token?: string; message?: string } & Partial<AuthLoginEmailCodeRequiredResponse>)
         | null;
+
+      if (
+        response.status === 202 &&
+        payload?.requiresEmailCode === true &&
+        payload.loginTicket &&
+        payload.email &&
+        payload.expiresAt
+      ) {
+        setEmail(payload.email);
+        setEmailCode('');
+        setLoginEmailTicket({
+          ticket: payload.loginTicket,
+          email: payload.email,
+          expiresAt: payload.expiresAt,
+        });
+        setStatus(payload.message ?? '检测到新的登录环境，请输入邮箱验证码。');
+        return;
+      }
 
       if (!response.ok || !payload?.user) {
         setStatus(payload?.message ?? '账号请求失败');
@@ -2941,6 +3214,7 @@ function AuthDialog({
         setEmail(payload.user.email || normalizedEmail);
         setUsername('');
         setPassword('');
+        setEmailCode('');
         setAutomationTrap('');
         setStatus('注册成功，请登录。');
         return;
@@ -2956,12 +3230,22 @@ function AuthDialog({
         token: payload.token,
       });
       setPassword('');
+      setEmailCode('');
     } catch (error) {
       setStatus(error instanceof Error && error.message === 'auth-challenge-unsupported' ? '当前浏览器不支持登录校验。' : '账号服务不可用');
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  const authModeItems: AuthMode[] = ['login', 'register', 'reset-password'];
+  const submitLabel = loginEmailTicket
+    ? '验证并登录'
+    : mode === 'login'
+      ? '进入账号'
+      : mode === 'register'
+        ? '创建账号'
+        : '重置密码';
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/45 p-3 sm:items-center sm:p-5">
@@ -2982,7 +3266,7 @@ function AuthDialog({
           <button
             type="button"
             aria-label="关闭 VidLive 账号"
-            onClick={() => onOpenChange(false)}
+            onClick={closeAuthDialog}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5"
           >
             <X size={17} />
@@ -2990,21 +3274,18 @@ function AuthDialog({
         </div>
 
         <div className="min-h-0 overflow-y-auto p-4">
-          <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg border-2 border-ink bg-white p-1">
-            {(['login', 'register'] as AuthMode[]).map((item) => (
+          <div className="mb-4 grid grid-cols-3 gap-2 rounded-lg border-2 border-ink bg-white p-1">
+            {authModeItems.map((item) => (
               <button
                 key={item}
                 type="button"
-                onClick={() => {
-                  setMode(item);
-                  setStatus(null);
-                }}
+                onClick={() => switchAuthMode(item)}
                 className={[
                   'h-9 rounded-md text-xs font-black transition',
                   mode === item ? 'bg-ink text-white' : 'bg-transparent text-ink/60 hover:bg-[#e4f7ff] hover:text-ink',
                 ].join(' ')}
               >
-                {item === 'login' ? '登录' : '注册'}
+                {item === 'login' ? '登录' : item === 'register' ? '注册' : '重置'}
               </button>
             ))}
           </div>
@@ -3030,17 +3311,17 @@ function AuthDialog({
               placeholder="you@example.com"
               error={fieldErrors.email}
               maxLength={254}
-              onChange={setEmail}
+              onChange={handleEmailChange}
             />
             <AuthTextField
-              label="密码"
+              label={mode === 'reset-password' ? '新密码' : '密码'}
               value={password}
               type="password"
-              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-              placeholder={mode === 'register' ? '10 位以上，含多类字符' : '输入密码'}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              placeholder={mode === 'login' ? '输入密码' : '10 位以上，含多类字符'}
               error={fieldErrors.password}
               maxLength={128}
-              onChange={setPassword}
+              onChange={handlePasswordChange}
             />
             <div aria-hidden="true" className="hidden">
               <label>
@@ -3055,7 +3336,7 @@ function AuthDialog({
               </label>
             </div>
 
-            {mode === 'register' && (
+            {(mode === 'register' || mode === 'reset-password') && (
               <div className="grid gap-1 rounded-lg border-2 border-ink/10 bg-white/70 p-3">
                 {passwordRules.map((rule) => (
                   <p
@@ -3069,7 +3350,55 @@ function AuthDialog({
               </div>
             )}
 
-            {mode === 'login' && (
+            {requiresEmailCode && (
+              <div className="grid gap-1">
+                <label className="grid gap-1 text-xs font-black text-ink/60">
+                  邮箱验证码
+                  <div className="grid grid-cols-[minmax(0,1fr)_7rem] items-start gap-2">
+                    <input
+                      type="text"
+                      value={emailCode}
+                      autoComplete="one-time-code"
+                      inputMode="numeric"
+                      placeholder="6 位数字"
+                      maxLength={6}
+                      aria-invalid={Boolean(fieldErrors.emailCode)}
+                      onChange={(event) => setEmailCode(event.target.value)}
+                      className={[
+                        'h-11 rounded-lg border-2 bg-white px-3 text-sm font-black text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2',
+                        fieldErrors.emailCode
+                          ? 'border-[#ff715b] focus:border-[#ff715b] focus:ring-[#ff715b]/30'
+                          : 'border-ink/15 focus:border-ink focus:ring-[#23b7a4]',
+                      ].join(' ')}
+                    />
+                    {(mode === 'register' || mode === 'reset-password') && (
+                      <button
+                        type="button"
+                        disabled={isSendingEmailCode || emailCodeCooldown > 0}
+                        onClick={requestEmailCode}
+                        className={[
+                          'inline-flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg border-2 border-ink px-2 text-xs font-black shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed',
+                          isEmailCodeComplete
+                            ? 'bg-[#23b7a4] text-white disabled:bg-[#23b7a4] disabled:text-white'
+                            : 'bg-white text-ink disabled:bg-ink/10 disabled:text-ink/40',
+                        ].join(' ')}
+                      >
+                        {isSendingEmailCode ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                        <span className="whitespace-nowrap">{emailCodeCooldown > 0 ? `${emailCodeCooldown}s` : '发送验证码'}</span>
+                      </button>
+                    )}
+                  </div>
+                  {fieldErrors.emailCode && <span className="text-[11px] leading-4 text-[#b63f2f]">{fieldErrors.emailCode}</span>}
+                </label>
+                {loginEmailTicket && (
+                  <p className="text-[11px] font-bold leading-4 text-ink/55">
+                    验证码已发送至 {loginEmailTicket.email}，请在邮箱中查看。
+                  </p>
+                )}
+              </div>
+            )}
+
+            {mode === 'login' && !loginEmailTicket && (
               <label className="inline-flex items-center gap-2 text-xs font-black text-ink/65">
                 <input
                   type="checkbox"
@@ -3087,7 +3416,7 @@ function AuthDialog({
               className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-[#23b7a4] px-4 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
             >
               {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <UserRound size={16} />}
-              {mode === 'login' ? '进入账号' : '创建账号'}
+              {submitLabel}
             </button>
 
             {status && <p className="text-xs font-bold leading-5 text-ink/60">{status}</p>}
@@ -3103,6 +3432,7 @@ function AuthTextField({
   value,
   type,
   autoComplete,
+  inputMode,
   placeholder,
   error,
   maxLength,
@@ -3112,6 +3442,7 @@ function AuthTextField({
   value: string;
   type: 'email' | 'password' | 'text';
   autoComplete: string;
+  inputMode?: 'email' | 'numeric' | 'text';
   placeholder: string;
   error?: string | undefined;
   maxLength?: number;
@@ -3124,6 +3455,7 @@ function AuthTextField({
         type={type}
         value={value}
         autoComplete={autoComplete}
+        inputMode={inputMode}
         placeholder={placeholder}
         maxLength={maxLength}
         aria-invalid={Boolean(error)}

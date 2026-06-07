@@ -12,7 +12,7 @@ type ProxyContext = {
   }>;
 };
 
-const defaultTargetOrigin = 'http://127.0.0.1:3001';
+const defaultTargetOrigin = 'http://127.0.0.1:8000';
 const hopByHopHeaders = [
   'connection',
   'content-length',

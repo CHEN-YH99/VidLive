@@ -22,6 +22,9 @@ export interface AppConfig {
   authCookieSecure: boolean;
   v1StorePath: string;
   permanentMemberEmails: string[];
+  emailCodeWebhookUrl: string | null;
+  emailCodeFrom: string;
+  emailCodeLogEnabled: boolean;
 }
 
 const builtInPermanentMemberEmails = ['1139189851@qq.com'];
@@ -64,7 +67,7 @@ function readEmailList(name: string): string[] {
 export function loadConfig(): AppConfig {
   return {
     host: process.env.API_HOST ?? '0.0.0.0',
-    port: readNumber('API_PORT', 3001),
+    port: readNumber('API_PORT', 8000),
     corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
     logLevel: process.env.LOG_LEVEL ?? 'info',
     uploadDir: process.env.UPLOAD_DIR ?? './uploads',
@@ -83,5 +86,10 @@ export function loadConfig(): AppConfig {
     authCookieSecure: process.env.AUTH_COOKIE_SECURE === 'true',
     v1StorePath: process.env.V1_STORE_PATH ?? './data/v1-store.json',
     permanentMemberEmails: [...new Set([...builtInPermanentMemberEmails, ...readEmailList('PERMANENT_MEMBER_EMAILS')])],
+    emailCodeWebhookUrl: readOptionalString('EMAIL_CODE_WEBHOOK_URL'),
+    emailCodeFrom: process.env.EMAIL_CODE_FROM ?? 'VidLive <no-reply@vidlive.local>',
+    emailCodeLogEnabled: process.env.EMAIL_CODE_LOG_ENABLED
+      ? process.env.EMAIL_CODE_LOG_ENABLED === 'true'
+      : process.env.NODE_ENV !== 'production',
   };
 }

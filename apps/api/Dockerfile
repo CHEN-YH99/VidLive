@@ -17,6 +17,6 @@ COPY . .
 
 RUN pnpm --filter @vidlive/shared run build && pnpm --filter @vidlive/api run build
 
-EXPOSE 3001
+EXPOSE 8000
 
 CMD ["pnpm", "--filter", "@vidlive/api", "start"]
