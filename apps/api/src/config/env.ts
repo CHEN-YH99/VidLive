@@ -1,5 +1,9 @@
-import 'dotenv/config';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 import { productLimits } from '@vidlive/shared';
+
+dotenv.config({ path: fileURLToPath(new URL('../../.env', import.meta.url)) });
+dotenv.config({ path: fileURLToPath(new URL('../../../../.env', import.meta.url)) });
 
 export interface AppConfig {
   host: string;
@@ -25,6 +29,15 @@ export interface AppConfig {
   emailCodeWebhookUrl: string | null;
   emailCodeFrom: string;
   emailCodeLogEnabled: boolean;
+  resendApiKey: string | null;
+  resendApiUrl: string;
+  resendTimeoutMilliseconds: number;
+  emailCodeSmtpHost: string | null;
+  emailCodeSmtpPort: number;
+  emailCodeSmtpSecure: boolean;
+  emailCodeSmtpUser: string | null;
+  emailCodeSmtpPassword: string | null;
+  emailCodeSmtpTimeoutMilliseconds: number;
 }
 
 const builtInPermanentMemberEmails = ['1139189851@qq.com'];
@@ -65,6 +78,8 @@ function readEmailList(name: string): string[] {
 }
 
 export function loadConfig(): AppConfig {
+  const emailCodeSmtpSecure = process.env.EMAIL_CODE_SMTP_SECURE === 'true';
+
   return {
     host: process.env.API_HOST ?? '0.0.0.0',
     port: readNumber('API_PORT', 8000),
@@ -91,5 +106,14 @@ export function loadConfig(): AppConfig {
     emailCodeLogEnabled: process.env.EMAIL_CODE_LOG_ENABLED
       ? process.env.EMAIL_CODE_LOG_ENABLED === 'true'
       : process.env.NODE_ENV !== 'production',
+    resendApiKey: readOptionalString('RESEND_API_KEY'),
+    resendApiUrl: readOptionalString('RESEND_API_URL') ?? 'https://api.resend.com/emails',
+    resendTimeoutMilliseconds: readNumber('RESEND_TIMEOUT_MS', 10_000),
+    emailCodeSmtpHost: readOptionalString('EMAIL_CODE_SMTP_HOST'),
+    emailCodeSmtpPort: readNumber('EMAIL_CODE_SMTP_PORT', emailCodeSmtpSecure ? 465 : 587),
+    emailCodeSmtpSecure,
+    emailCodeSmtpUser: readOptionalString('EMAIL_CODE_SMTP_USER'),
+    emailCodeSmtpPassword: readOptionalString('EMAIL_CODE_SMTP_PASSWORD'),
+    emailCodeSmtpTimeoutMilliseconds: readNumber('EMAIL_CODE_SMTP_TIMEOUT_MS', 10_000),
   };
 }

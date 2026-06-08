@@ -7,6 +7,8 @@ import {
   type StoredEmailVerificationCodeRecord,
   type StoredUserRecord,
 } from './v1.auth-store.js';
+import { sendResendEmail, type ResendEmailConfig } from './v1.email-resend.js';
+import { sendSmtpEmail, type SmtpEmailConfig } from './v1.email-smtp.js';
 
 const scryptAsync = promisify(scrypt);
 const tokenTtlMilliseconds = 3 * 24 * 60 * 60 * 1000;
@@ -40,6 +42,8 @@ export interface V1ServiceOptions {
   emailCodeFrom?: string;
   emailCodeLogEnabled?: boolean;
   emailCodeGenerator?: () => string;
+  emailCodeResend?: ResendEmailConfig | null;
+  emailCodeSmtp?: SmtpEmailConfig | null;
 }
 
 export interface V1UserProfile {
@@ -72,7 +76,7 @@ export interface V1EmailCodeRequestResult {
   email: string;
   expiresAt: string;
   cooldownSeconds: number;
-  delivery: 'webhook' | 'log';
+  delivery: 'resend' | 'smtp' | 'webhook' | 'log';
   message: string;
 }
 
@@ -224,6 +228,8 @@ export class V1Service {
   private readonly emailCodeWebhookUrl: string | null;
   private readonly emailCodeLogEnabled: boolean;
   private readonly emailCodeGenerator: () => string;
+  private readonly emailCodeResend: ResendEmailConfig | null;
+  private readonly emailCodeSmtp: SmtpEmailConfig | null;
 
   constructor(
     private readonly jwtSecret: string,
@@ -236,6 +242,8 @@ export class V1Service {
     this.emailCodeWebhookUrl = options.emailCodeWebhookUrl ?? null;
     this.emailCodeLogEnabled = options.emailCodeLogEnabled ?? process.env.NODE_ENV !== 'production';
     this.emailCodeGenerator = options.emailCodeGenerator ?? generateEmailCode;
+    this.emailCodeResend = options.emailCodeResend?.apiKey ? options.emailCodeResend : null;
+    this.emailCodeSmtp = options.emailCodeSmtp?.host ? options.emailCodeSmtp : null;
   }
 
   static async create(
@@ -315,7 +323,7 @@ export class V1Service {
           email,
           expiresAt: new Date(Date.now() + emailCodeTtlMilliseconds).toISOString(),
           cooldownSeconds: Math.ceil(emailCodeCooldownMilliseconds / 1000),
-          delivery: this.emailCodeWebhookUrl ? 'webhook' : 'log',
+          delivery: this.getEmailCodeDeliveryMode(),
           message: '如果该邮箱已注册，验证码会发送到对应邮箱。',
         };
       }
@@ -699,7 +707,7 @@ export class V1Service {
     purpose: EmailVerificationPurpose;
     code: string;
     expiresAt: Date;
-  }): Promise<'webhook' | 'log'> {
+  }): Promise<'resend' | 'smtp' | 'webhook' | 'log'> {
     const subject = getEmailCodeSubject(input.purpose);
     const text = [
       `${subject}`,
@@ -709,6 +717,46 @@ export class V1Service {
       '',
       '如果不是你本人操作，请忽略这封邮件。',
     ].join('\n');
+
+    if (this.emailCodeResend) {
+      try {
+        await sendResendEmail(this.emailCodeResend, {
+          from: this.emailCodeFrom,
+          to: input.email,
+          subject,
+          text,
+        });
+      } catch (error) {
+        console.error('[VidLive email code Resend delivery failed]', {
+          to: input.email,
+          purpose: input.purpose,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new V1Error('email-code-delivery-failed', '验证码邮件发送失败，请稍后再试。');
+      }
+
+      return 'resend';
+    }
+
+    if (this.emailCodeSmtp) {
+      try {
+        await sendSmtpEmail(this.emailCodeSmtp, {
+          from: this.emailCodeFrom,
+          to: input.email,
+          subject,
+          text,
+        });
+      } catch (error) {
+        console.error('[VidLive email code SMTP delivery failed]', {
+          to: input.email,
+          purpose: input.purpose,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new V1Error('email-code-delivery-failed', '验证码邮件发送失败，请稍后再试。');
+      }
+
+      return 'smtp';
+    }
 
     if (this.emailCodeWebhookUrl) {
       const response = await fetch(this.emailCodeWebhookUrl, {
@@ -744,6 +792,22 @@ export class V1Service {
       code: input.code,
       expiresAt: input.expiresAt.toISOString(),
     });
+
+    return 'log';
+  }
+
+  private getEmailCodeDeliveryMode(): 'resend' | 'smtp' | 'webhook' | 'log' {
+    if (this.emailCodeResend) {
+      return 'resend';
+    }
+
+    if (this.emailCodeSmtp) {
+      return 'smtp';
+    }
+
+    if (this.emailCodeWebhookUrl) {
+      return 'webhook';
+    }
 
     return 'log';
   }

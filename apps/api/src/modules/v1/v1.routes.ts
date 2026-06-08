@@ -73,6 +73,23 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     emailCodeWebhookUrl: config.emailCodeWebhookUrl,
     emailCodeFrom: config.emailCodeFrom,
     emailCodeLogEnabled: config.emailCodeLogEnabled,
+    emailCodeResend: config.resendApiKey
+      ? {
+          apiKey: config.resendApiKey,
+          apiUrl: config.resendApiUrl,
+          timeoutMilliseconds: config.resendTimeoutMilliseconds,
+        }
+      : null,
+    emailCodeSmtp: config.emailCodeSmtpHost
+      ? {
+          host: config.emailCodeSmtpHost,
+          port: config.emailCodeSmtpPort,
+          secure: config.emailCodeSmtpSecure,
+          user: config.emailCodeSmtpUser,
+          password: config.emailCodeSmtpPassword,
+          timeoutMilliseconds: config.emailCodeSmtpTimeoutMilliseconds,
+        }
+      : null,
   });
 
   server.get('/api/v1/auth/challenge', async () => {
