@@ -96,10 +96,10 @@ export class FfmpegService {
 
     const args = [
       '-y',
-      '-ss',
-      options.startSeconds.toString(),
       '-i',
       options.inputPath,
+      '-ss',
+      options.startSeconds.toString(),
       '-t',
       options.durationSeconds.toString(),
       '-map',
@@ -144,10 +144,10 @@ export class FfmpegService {
 
     const args = [
       '-y',
-      '-ss',
-      options.startSeconds.toString(),
       '-i',
       options.inputPath,
+      '-ss',
+      options.startSeconds.toString(),
       '-t',
       options.durationSeconds.toString(),
       '-map',
@@ -206,10 +206,10 @@ export class FfmpegService {
 
     const args = [
       '-y',
-      '-ss',
-      options.startSeconds.toString(),
       '-i',
       options.inputPath,
+      '-ss',
+      options.startSeconds.toString(),
       '-t',
       options.durationSeconds.toString(),
       '-map',
@@ -244,10 +244,10 @@ export class FfmpegService {
       'ffmpeg',
       [
         '-y',
-        '-ss',
-        options.timestampSeconds.toString(),
         '-i',
         options.inputPath,
+        '-ss',
+        options.timestampSeconds.toString(),
         '-frames:v',
         '1',
         '-q:v',

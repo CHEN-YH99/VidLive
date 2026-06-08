@@ -1809,6 +1809,8 @@ function UploadPanel({
   onPlaybackReady: () => void;
   onPlaybackTimeChange: (seconds: number) => void;
 }) {
+  const videoRef = useStartSyncedVideo(draft.startSeconds, onPlaybackTimeChange);
+
   return (
     <section
       {...getRootProps()}
@@ -1852,6 +1854,7 @@ function UploadPanel({
             <img src={previewUrl} alt="" className="h-full min-h-52 w-full object-contain" />
           ) : (
             <video
+              ref={videoRef}
               src={previewUrl}
               className="h-full min-h-52 w-full object-contain"
               muted={draft.muted}
@@ -1900,6 +1903,8 @@ function MediaPreview({
   onPlaybackReady: () => void;
   onPlaybackTimeChange: (seconds: number) => void;
 }) {
+  const videoRef = useStartSyncedVideo(draft.startSeconds, onPlaybackTimeChange);
+
   if (!previewUrl || !file) {
     return (
       <section className="clay-card flex min-h-80 items-center justify-center bg-white text-ink/55">
@@ -1917,6 +1922,7 @@ function MediaPreview({
         <img src={previewUrl} alt="" className="h-full max-h-[520px] min-h-80 w-full object-contain" />
       ) : (
         <video
+          ref={videoRef}
           src={previewUrl}
           className="h-full max-h-[520px] min-h-80 w-full object-contain"
           controls
@@ -1936,6 +1942,43 @@ function MediaPreview({
       )}
     </section>
   );
+}
+
+function useStartSyncedVideo(startSeconds: number, onPlaybackTimeChange: (seconds: number) => void) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+
+    if (!video || !Number.isFinite(startSeconds)) {
+      return undefined;
+    }
+
+    const syncToStart = () => {
+      const duration = Number.isFinite(video.duration) ? video.duration : null;
+      const nextTime = duration === null ? Math.max(0, startSeconds) : clamp(startSeconds, 0, duration);
+
+      if (Math.abs(video.currentTime - nextTime) < 0.05) {
+        return;
+      }
+
+      video.currentTime = nextTime;
+      onPlaybackTimeChange(nextTime);
+    };
+
+    if (video.readyState >= 1) {
+      syncToStart();
+      return undefined;
+    }
+
+    video.addEventListener('loadedmetadata', syncToStart, { once: true });
+
+    return () => {
+      video.removeEventListener('loadedmetadata', syncToStart);
+    };
+  }, [onPlaybackTimeChange, startSeconds]);
+
+  return videoRef;
 }
 
 function CoverPreview({ coverUrl, isGif, open }: { coverUrl: string | null; isGif: boolean; open: () => void }) {
@@ -2931,7 +2974,9 @@ async function hashLoginChallenge(challengeId: string, nonce: string, answer: st
       const digest = await globalThis.crypto.subtle.digest('SHA-256', data);
 
       return bytesToHex(new Uint8Array(digest));
-    } catch {}
+    } catch {
+      return sha256Hex(data);
+    }
   }
 
   return sha256Hex(data);

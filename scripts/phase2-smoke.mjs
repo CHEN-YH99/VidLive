@@ -1,6 +1,6 @@
-/* global Blob, FormData, URLSearchParams, console, fetch, process, setTimeout */
+/* global Blob, Buffer, FormData, URLSearchParams, console, fetch, process, setTimeout */
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +42,7 @@ async function main() {
     const job = await createCloudJob();
     const completedJob = await waitForCompletedJob(job.id);
     const zipSize = await downloadZip(completedJob);
+    await assertPairedVideoStartsAtTrimPoint(completedJob);
 
     await deleteJob(completedJob.id);
 
@@ -79,13 +80,17 @@ async function createSampleVideo() {
     '-f',
     'lavfi',
     '-i',
-    'testsrc=size=720x1280:rate=30',
-    '-t',
-    '2',
-    '-pix_fmt',
-    'yuv420p',
+    'color=c=red:s=160x120:d=3:r=30',
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=green:s=160x120:d=3:r=30',
+    '-filter_complex',
+    '[0:v][1:v]concat=n=2:v=1:a=0,format=yuv420p',
     '-c:v',
     'libx264',
+    '-movflags',
+    '+faststart',
     inputPath,
   ]);
 }
@@ -105,12 +110,12 @@ async function createCloudJob() {
   formData.append('file', new Blob([file], { type: 'video/mp4' }), 'phase2-smoke.mp4');
 
   const query = new URLSearchParams({
-    presetId: 'ios-lock-screen',
-    aspectRatioId: '9:16',
+    presetId: 'standard-live-photo',
+    aspectRatioId: 'source',
     fitMode: 'cover',
-    startSeconds: '0',
-    endSeconds: '2',
-    keyframeSeconds: '1',
+    startSeconds: '3',
+    endSeconds: '5',
+    keyframeSeconds: '4',
     muted: 'true',
   });
   const response = await fetch(`${apiBaseUrl}/api/conversions/cloud-jobs?${query.toString()}`, {
@@ -159,6 +164,46 @@ async function downloadZip(job) {
   }
 
   return bytes.byteLength;
+}
+
+async function assertPairedVideoStartsAtTrimPoint(job) {
+  if (!job.pairedVideo?.downloadUrl) {
+    throw new Error('Completed job did not include a paired video download URL.');
+  }
+
+  const response = await fetch(`${apiBaseUrl}${job.pairedVideo.downloadUrl}`);
+  const contentType = response.headers.get('content-type') ?? '';
+  const bytes = await response.arrayBuffer();
+
+  if (!response.ok || !contentType.includes('video/quicktime') || bytes.byteLength < 100) {
+    throw new Error(`Paired video download failed: ${response.status}, ${contentType}, ${bytes.byteLength} bytes`);
+  }
+
+  const pairedVideoPath = path.join(smokeDir, 'paired-video.mov');
+  const rawPixelPath = path.join(smokeDir, 'paired-video-first-pixel.rgb');
+
+  await writeFile(pairedVideoPath, Buffer.from(bytes));
+  await execFileAsync('ffmpeg', [
+    '-v',
+    'error',
+    '-y',
+    '-i',
+    pairedVideoPath,
+    '-frames:v',
+    '1',
+    '-vf',
+    'scale=1:1:flags=neighbor,format=rgb24',
+    '-f',
+    'rawvideo',
+    rawPixelPath,
+  ]);
+
+  const pixel = await readFile(rawPixelPath);
+  const [red, green, blue] = pixel;
+
+  if (green < 80 || red > 40 || blue > 40) {
+    throw new Error(`Paired video did not start at the requested 3s trim point: rgb(${red}, ${green}, ${blue}).`);
+  }
 }
 
 async function deleteJob(jobId) {
