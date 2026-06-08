@@ -21,6 +21,12 @@
 cp .env.docker.example .env.production
 ```
 
+Windows 用 PowerShell：
+
+```powershell
+Copy-Item .env.docker.example .env.production
+```
+
 修改 `.env.production`：
 
 ```env
@@ -65,6 +71,12 @@ R2_BUCKET=...
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 ```
 
+Windows PowerShell 同样执行：
+
+```powershell
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
 查看状态：
 
 ```bash
@@ -96,7 +108,74 @@ curl http://127.0.0.1:8000/api/health
 curl http://127.0.0.1:3010/api/health
 ```
 
+Windows PowerShell 如果 `curl` 被映射成 `Invoke-WebRequest` 后输出不好看，可以用：
+
+```powershell
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/health | Select-Object -ExpandProperty Content
+```
+
 如果你在服务器上用 `curl http://127.0.0.1:8000/api/health` 能看到 `{"status":"ok"}`，但公网打不开，优先检查防火墙、安全组、域名解析和外层反代。先别急着改代码，代码背这个锅就很冤。
+
+## Windows 部署准备
+
+Windows 本机或 Windows 服务器也能跑这套 Compose，但要注意它跑的是 Linux 容器：
+
+1. 安装 Docker Desktop。
+2. Docker Desktop 设置里启用 WSL 2 backend。
+3. Docker Desktop 切到 `Linux containers`，不要用 `Windows containers`。
+4. 确认 Docker 可用：
+
+```powershell
+docker --version
+docker compose version
+```
+
+5. 如果提示 WSL 缺失，在管理员 PowerShell 执行：
+
+```powershell
+wsl --install
+```
+
+安装完成后重启电脑，再打开 Docker Desktop。
+
+6. 如果 Windows 防火墙拦截访问，需要放行 `WEB_PORT`，默认是 `8000`。
+
+Windows 只适合本机验证或轻量服务器部署。正式生产更推荐 Linux 服务器，少很多 Docker Desktop、登录会话、自动启动和防火墙层面的幺蛾子。不是 Windows 不能用，是它上线跑容器确实更会搞事情。
+
+### Docker Desktop 没有托盘图标或连不上 Engine
+
+如果系统托盘右下角没有 Docker 图标，先从开始菜单搜索并打开 `Docker Desktop`，等到界面显示 Docker Engine 已启动。任务栏可能会把图标收到 `^` 隐藏图标里。
+
+如果执行 `docker version` 只有 `Client`，没有 `Server`，或者提示：
+
+```text
+permission denied while trying to connect to the docker API
+```
+
+按下面顺序处理：
+
+1. 退出 Docker Desktop，再从开始菜单重新打开。
+2. 如果仍然不行，用管理员 PowerShell 执行：
+
+```powershell
+Start-Service com.docker.service
+```
+
+3. 如果提示没有权限，把当前 Windows 用户加入 `docker-users`：
+
+```powershell
+net localgroup docker-users "$env:USERNAME" /add
+```
+
+4. 注销 Windows 用户，重新登录，再打开 Docker Desktop。
+5. 再次验证：
+
+```powershell
+docker version
+docker compose version
+```
+
+只有看到 `docker version` 输出里同时存在 `Client` 和 `Server`，才能继续执行 Compose 部署。
 
 ## 上线前需要你准备
 
