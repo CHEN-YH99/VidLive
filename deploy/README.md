@@ -28,6 +28,7 @@ POSTGRES_PASSWORD=换成强密码
 DATABASE_URL=postgresql://postgres:同一个强密码@postgres:5432/video_prompt?schema=public
 JWT_SECRET=换成足够长的随机密钥
 CORS_ORIGIN=https://你的域名
+AUTH_COOKIE_SECURE=true
 NEXT_PUBLIC_API_BASE_URL=/api
 ```
 
@@ -35,7 +36,28 @@ NEXT_PUBLIC_API_BASE_URL=/api
 
 ```env
 CORS_ORIGIN=http://localhost:8000
+AUTH_COOKIE_SECURE=false
 ```
+
+如果暂时只用服务器 IP 测试，把 `CORS_ORIGIN` 改成：
+
+```env
+CORS_ORIGIN=http://服务器IP:8000
+AUTH_COOKIE_SECURE=false
+```
+
+如果启用 Resend 或 SMTP 发验证码，需要在 `.env.production` 填写对应密钥；如果不填，生产环境不会把验证码打印到日志，用户就收不到验证码。
+
+如果启用 Cloudflare R2 或兼容 S3 的对象存储，填写：
+
+```env
+R2_ENDPOINT=https://你的账号.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=...
+```
+
+不填写也能跑，导出包会保存在 `backend_uploads` Docker 卷里。
 
 启动：
 
@@ -62,11 +84,34 @@ docker compose -f docker-compose.prod.yml --env-file .env.production logs -f web
 http://localhost:8000
 ```
 
-后端本机健康检查：
+站点健康检查：
+
+```bash
+curl http://127.0.0.1:8000/api/health
+```
+
+后端直连健康检查：
 
 ```bash
 curl http://127.0.0.1:3010/api/health
 ```
+
+如果你在服务器上用 `curl http://127.0.0.1:8000/api/health` 能看到 `{"status":"ok"}`，但公网打不开，优先检查防火墙、安全组、域名解析和外层反代。先别急着改代码，代码背这个锅就很冤。
+
+## 上线前需要你准备
+
+这些东西不在仓库里，我没法替你凭空变出来：
+
+- 服务器 SSH 权限，或者能执行 Docker Compose 的面板权限。
+- 域名和 DNS 解析。如果没有域名，只能先用 `http://服务器IP:8000` 测。
+- HTTPS 证书。正式登录 Cookie 建议配 HTTPS 后再把 `AUTH_COOKIE_SECURE=true`。
+- 新的生产密钥：`POSTGRES_PASSWORD`、`JWT_SECRET`、邮件服务密钥。
+- 邮件服务配置：Resend API Key、已验证发件域名/发件地址，或 SMTP 账号。
+- 可选对象存储：Cloudflare R2 或兼容 S3 的 endpoint、bucket、access key。
+- 服务器防火墙/安全组放行 80/443，或者临时放行 `WEB_PORT`。
+- 如果要验证完整 iOS Live Photo MakerNote 链路，还需要 iPhone 原生实况照片导出的模板静态图。
+
+仓库里我能处理的是 Dockerfile、Compose、Nginx、环境变量模板、部署文档和本地构建校验；真实账号、域名、密钥、服务器控制台这些必须你配合。这个不是甩锅，是物理上我没你银行卡和服务器密码。
 
 ## 更新发布
 
@@ -101,7 +146,7 @@ http://127.0.0.1:8000
 接口 `/api/` 已经由网关 Nginx 转发到：
 
 ```text
-http://backend:3010/api/
+http://backend:8000/api/
 ```
 
 页面请求会由网关 Nginx 转发到：
