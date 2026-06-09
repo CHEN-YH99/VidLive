@@ -42,6 +42,48 @@ export interface AppConfig {
 
 const builtInPermanentMemberEmails = ['1139189851@qq.com'];
 
+const INSECURE_JWT_SECRET = 'dev-vidlive-secret-change-me';
+const MIN_JWT_SECRET_LENGTH = 32;
+
+function resolveJwtSecret(): string {
+  const secret = process.env.JWT_SECRET?.trim();
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  if (isProduction) {
+    if (!secret || secret === INSECURE_JWT_SECRET || secret.length < MIN_JWT_SECRET_LENGTH) {
+      throw new Error(
+        `Refusing to start: JWT_SECRET must be set to a non-default value of at least ${MIN_JWT_SECRET_LENGTH} characters in production.`,
+      );
+    }
+
+    return secret;
+  }
+
+  return secret && secret.length > 0 ? secret : INSECURE_JWT_SECRET;
+}
+
+function resolveCorsOrigin(): string {
+  const origin = process.env.CORS_ORIGIN?.trim();
+
+  if (origin) {
+    return origin;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Refusing to start: CORS_ORIGIN must be set in production.');
+  }
+
+  return 'http://localhost:3000';
+}
+
+function resolveAuthCookieSecure(): boolean {
+  if (process.env.AUTH_COOKIE_SECURE !== undefined) {
+    return process.env.AUTH_COOKIE_SECURE === 'true';
+  }
+
+  return process.env.NODE_ENV === 'production';
+}
+
 function readNumber(name: string, fallback: number): number {
   const value = process.env[name];
 
@@ -83,7 +125,7 @@ export function loadConfig(): AppConfig {
   return {
     host: process.env.API_HOST ?? '0.0.0.0',
     port: readNumber('API_PORT', 8000),
-    corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
+    corsOrigin: resolveCorsOrigin(),
     logLevel: process.env.LOG_LEVEL ?? 'info',
     uploadDir: process.env.UPLOAD_DIR ?? './uploads',
     localFileSizeBytes: readNumber('MAX_LOCAL_FILE_SIZE', productLimits.localFileSizeBytes),
@@ -97,8 +139,8 @@ export function loadConfig(): AppConfig {
     r2SecretAccessKey: readOptionalString('R2_SECRET_ACCESS_KEY'),
     r2Bucket: readOptionalString('R2_BUCKET'),
     r2SignedUrlTtlSeconds: readNumber('R2_SIGNED_URL_TTL_SECONDS', 60 * 60),
-    jwtSecret: process.env.JWT_SECRET ?? 'dev-vidlive-secret-change-me',
-    authCookieSecure: process.env.AUTH_COOKIE_SECURE === 'true',
+    jwtSecret: resolveJwtSecret(),
+    authCookieSecure: resolveAuthCookieSecure(),
     v1StorePath: process.env.V1_STORE_PATH ?? './data/v1-store.json',
     permanentMemberEmails: [...new Set([...builtInPermanentMemberEmails, ...readEmailList('PERMANENT_MEMBER_EMAILS')])],
     emailCodeWebhookUrl: readOptionalString('EMAIL_CODE_WEBHOOK_URL'),

@@ -38,12 +38,14 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 
 COPY --from=builder /app/package.json ./
-COPY --from=builder /app/pnpm-lock.yaml ./
-COPY --from=builder /app/pnpm-workspace.yaml ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/apps ./apps
-COPY --from=builder /app/packages ./packages
+COPY --from=builder --chown=node:node /app/pnpm-lock.yaml ./
+COPY --from=builder --chown=node:node /app/pnpm-workspace.yaml ./
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/apps ./apps
+COPY --from=builder --chown=node:node /app/packages ./packages
+
+USER node
 
 EXPOSE 3000
 
-CMD ["pnpm", "--filter", "@vidlive/web", "exec", "next", "start", "-H", "0.0.0.0", "-p", "3000"]
+CMD ["node", "apps/web/node_modules/next/dist/bin/next", "start", "apps/web", "-H", "0.0.0.0", "-p", "3000"]

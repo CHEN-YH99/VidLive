@@ -728,7 +728,7 @@ export class V1Service {
         });
       } catch (error) {
         console.error('[VidLive email code Resend delivery failed]', {
-          to: input.email,
+          to: maskEmail(input.email),
           purpose: input.purpose,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -748,7 +748,7 @@ export class V1Service {
         });
       } catch (error) {
         console.error('[VidLive email code SMTP delivery failed]', {
-          to: input.email,
+          to: maskEmail(input.email),
           purpose: input.purpose,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -784,6 +784,17 @@ export class V1Service {
 
     if (!this.emailCodeLogEnabled) {
       throw new V1Error('email-code-delivery-not-configured', '验证码邮件服务未配置，请联系管理员。');
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+      // 生产环境即便误开 log 模式，也绝不打印明文验证码，避免日志泄露导致账户被接管。
+      console.warn('[VidLive email code] 验证码 log 模式在生产环境被启用，已隐藏明文验证码，请尽快配置真实邮件服务。', {
+        to: maskEmail(input.email),
+        purpose: input.purpose,
+        expiresAt: input.expiresAt.toISOString(),
+      });
+
+      return 'log';
     }
 
     console.info('[VidLive email code]', {
@@ -1312,10 +1323,15 @@ export class V1Service {
     return intent;
   }
 
-  confirmCheckoutIntent(intentId: string): { intent: CheckoutIntent; user: V1UserProfile } {
+  confirmCheckoutIntent(intentId: string, requesterId?: string): { intent: CheckoutIntent; user: V1UserProfile } {
     const intent = this.checkoutIntents.get(intentId);
 
     if (!intent) {
+      throw new V1Error('checkout-not-found', '未找到对应的 VidLive 支付确认记录。');
+    }
+
+    // 校验归属：支付确认只能由发起该 intent 的本人触发，防止越权免费升级 Pro。
+    if (requesterId !== undefined && intent.userId !== requesterId) {
       throw new V1Error('checkout-not-found', '未找到对应的 VidLive 支付确认记录。');
     }
 
@@ -1715,6 +1731,13 @@ export class V1Service {
     return this.permanentMemberEmails.has(normalizeEmail(email));
   }
 
+  // 管理员判定：复用永久会员邮箱白名单，避免引入额外角色体系。仅白名单内账号可访问商业统计等管理接口。
+  isAdminUser(userId: string): boolean {
+    const user = this.users.get(userId);
+
+    return user ? this.isPermanentMemberEmail(user.email) : false;
+  }
+
   private requireUser(userId: string): StoredUser {
     const user = this.users.get(userId);
 
@@ -2064,6 +2087,21 @@ function timingSafeHexEqual(left: string, right: string): boolean {
   const rightBuffer = Buffer.from(right, 'hex');
 
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function maskEmail(email: string): string {
+  const trimmed = email.trim();
+  const atIndex = trimmed.lastIndexOf('@');
+
+  if (atIndex <= 0) {
+    return '***';
+  }
+
+  const local = trimmed.slice(0, atIndex);
+  const domain = trimmed.slice(atIndex + 1);
+  const maskedLocal = local.length <= 2 ? `${local.slice(0, 1)}***` : `${local.slice(0, 2)}***`;
+
+  return `${maskedLocal}@${domain}`;
 }
 
 async function delayInvalidLogin(): Promise<void> {

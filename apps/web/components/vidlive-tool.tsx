@@ -690,6 +690,20 @@ export function VidLiveTool() {
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [previewPlaybackFailed, setPreviewPlaybackFailed] = useState(false);
   const [playheadSeconds, setPlayheadSeconds] = useState(0);
+
+  const syncMetadataDuration = useCallback((videoDuration: number) => {
+    if (Number.isFinite(videoDuration) && videoDuration > 0) {
+      setMetadata((current) => {
+        if (!current || current.durationSeconds === videoDuration) {
+          return current;
+        }
+        return {
+          ...current,
+          durationSeconds: videoDuration,
+        };
+      });
+    }
+  }, []);
   const [failureReason, setFailureReason] = useState<FailureReason | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -1378,6 +1392,7 @@ export function VidLiveTool() {
                 onPlaybackError={() => setPreviewPlaybackFailed(true)}
                 onPlaybackReady={() => setPreviewPlaybackFailed(false)}
                 onPlaybackTimeChange={setPlayheadSeconds}
+                onMetadataLoaded={syncMetadataDuration}
               />
 
               {currentFailure && !generationFeedbackAvailable && (
@@ -1404,6 +1419,7 @@ export function VidLiveTool() {
                   onPlaybackError={() => setPreviewPlaybackFailed(true)}
                   onPlaybackReady={() => setPreviewPlaybackFailed(false)}
                   onPlaybackTimeChange={setPlayheadSeconds}
+                  onMetadataLoaded={syncMetadataDuration}
                 />
                 <CoverPreview coverUrl={coverUrl} isGif={Boolean(file && isGif(file))} open={open} />
               </section>
@@ -1795,6 +1811,7 @@ function UploadPanel({
   onPlaybackError,
   onPlaybackReady,
   onPlaybackTimeChange,
+  onMetadataLoaded,
 }: {
   file: File | null;
   previewUrl: string | null;
@@ -1808,6 +1825,7 @@ function UploadPanel({
   onPlaybackError: () => void;
   onPlaybackReady: () => void;
   onPlaybackTimeChange: (seconds: number) => void;
+  onMetadataLoaded?: (duration: number) => void;
 }) {
   const videoRef = useStartSyncedVideo(draft.startSeconds, onPlaybackTimeChange);
 
@@ -1863,7 +1881,11 @@ function UploadPanel({
               controls
               onError={onPlaybackError}
               onCanPlay={onPlaybackReady}
-              onLoadedMetadata={(event) => onPlaybackTimeChange(event.currentTarget.currentTime)}
+              onLoadedMetadata={(event) => {
+                const video = event.currentTarget;
+                onPlaybackTimeChange(video.currentTime);
+                onMetadataLoaded?.(video.duration);
+              }}
               onTimeUpdate={(event) => onPlaybackTimeChange(event.currentTarget.currentTime)}
             />
           )
@@ -1894,6 +1916,7 @@ function MediaPreview({
   onPlaybackError,
   onPlaybackReady,
   onPlaybackTimeChange,
+  onMetadataLoaded,
 }: {
   file: File | null;
   previewUrl: string | null;
@@ -1902,6 +1925,7 @@ function MediaPreview({
   onPlaybackError: () => void;
   onPlaybackReady: () => void;
   onPlaybackTimeChange: (seconds: number) => void;
+  onMetadataLoaded?: (duration: number) => void;
 }) {
   const videoRef = useStartSyncedVideo(draft.startSeconds, onPlaybackTimeChange);
 
@@ -1931,7 +1955,11 @@ function MediaPreview({
           preload="metadata"
           onError={onPlaybackError}
           onCanPlay={onPlaybackReady}
-          onLoadedMetadata={(event) => onPlaybackTimeChange(event.currentTarget.currentTime)}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            onPlaybackTimeChange(video.currentTime);
+            onMetadataLoaded?.(video.duration);
+          }}
           onTimeUpdate={(event) => onPlaybackTimeChange(event.currentTarget.currentTime)}
         />
       )}

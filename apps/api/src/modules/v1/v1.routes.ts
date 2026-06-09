@@ -354,8 +354,17 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
   });
 
   server.post<{ Params: CheckoutParams }>('/api/v1/billing/checkout-intents/:intentId/confirm', async (request, reply) => {
+    const user = await authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: '请登录后再访问该 VidLive 接口。',
+      });
+    }
+
     try {
-      return service.confirmCheckoutIntent(request.params.intentId);
+      return service.confirmCheckoutIntent(request.params.intentId, user.id);
     } catch (error) {
       return sendV1Error(reply, error);
     }
@@ -398,9 +407,19 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
   });
 
   server.get<{ Params: BatchParams }>('/api/v1/batches/:batchId', async (request, reply) => {
+    const user = await authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: '请登录后再访问该 VidLive 接口。',
+      });
+    }
+
     const batch = service.getBatch(request.params.batchId);
 
-    if (!batch) {
+    // 校验归属：只能读取属于当前用户的批次，避免越权读取他人文件名等信息。
+    if (!batch || batch.userId !== user.id) {
       return reply.status(404).send({
         code: 'batch-not-found',
         message: '未找到对应的批量导出任务。',
@@ -427,7 +446,23 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     return service.assignExperiment(request.query.visitorId ?? 'anonymous');
   });
 
-  server.get('/api/v1/admin/commercial-summary', async () => {
+  server.get('/api/v1/admin/commercial-summary', async (request, reply) => {
+    const user = await authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: '请登录后再访问该 VidLive 接口。',
+      });
+    }
+
+    if (!service.isAdminUser(user.id)) {
+      return reply.status(403).send({
+        code: 'forbidden',
+        message: '没有访问该管理接口的权限。',
+      });
+    }
+
     return service.getCommercialSummary();
   });
 
