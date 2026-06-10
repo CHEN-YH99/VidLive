@@ -73,6 +73,24 @@ pnpm run dev:web
 - Web: `http://localhost:3000`
 - API: `http://localhost:8000`
 
+## 部署上线
+
+生产部署使用 Docker Compose 一键编排（PostgreSQL + Redis + 后端 API + Next.js 前端 + Nginx 网关），完整步骤、环境变量说明和运维命令见 [deploy/README.md](deploy/README.md)。
+
+快速上手：
+
+```bash
+cp .env.docker.example .env.production
+# 按需修改 POSTGRES_PASSWORD、JWT_SECRET、CORS_ORIGIN、邮件服务等
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+上线前务必注意：
+
+- 生产环境 `JWT_SECRET`（≥32 字符）和 `CORS_ORIGIN` 必填，否则后端拒绝启动。
+- 注册验证码依赖邮件服务，需配置 Resend 或 SMTP，否则用户收不到验证码。
+- 数据库表在后端启动时自动创建，无需手动执行迁移。
+
 ## Docker API 验证
 
 构建带 FFmpeg/ffprobe/exiftool 的 API 镜像：
