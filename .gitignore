@@ -16,6 +16,9 @@ coverage/
 !.env.example
 !.env.docker.example
 
+# Local-only compose override (HTTP/LAN demo) —— 绝不能上线，会关掉 Secure Cookie
+docker-compose.local.yml
+
 # Logs and local process files
 *.log
 *.err.log
