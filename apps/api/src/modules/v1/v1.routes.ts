@@ -98,21 +98,22 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
 
   server.post<{ Body: EmailCodeBody }>('/api/v1/auth/email-codes', async (request, reply) => {
     try {
+      const body = readRequestBody(request.body);
       const context = createAuthRequestContext(request, reply, config.authCookieSecure);
-      const purpose: EmailVerificationPurpose = isEmailVerificationPurpose(request.body.purpose) ? request.body.purpose : 'register';
+      const purpose: EmailVerificationPurpose = isEmailVerificationPurpose(body.purpose) ? body.purpose : 'register';
       const emailCodeInput: {
         email: string;
         purpose: EmailVerificationPurpose;
         username?: string;
         context: V1AuthRequestContext;
       } = {
-        email: request.body.email ?? '',
+        email: readStringField(body, 'email'),
         purpose,
         context,
       };
 
-      if (request.body.username !== undefined) {
-        emailCodeInput.username = request.body.username;
+      if (body.username !== undefined) {
+        emailCodeInput.username = readStringField(body, 'username');
       }
 
       return await service.requestEmailCode(emailCodeInput);
@@ -123,13 +124,14 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
 
   server.post<{ Body: AuthBody }>('/api/v1/auth/register', async (request, reply) => {
     try {
+      const body = readRequestBody(request.body);
       const context = createAuthRequestContext(request, reply, config.authCookieSecure);
 
       return await service.register({
-        email: request.body.email ?? '',
-        password: request.body.password ?? '',
-        username: request.body.username ?? '',
-        emailCode: request.body.emailCode ?? '',
+        email: readStringField(body, 'email'),
+        password: readStringField(body, 'password'),
+        username: readStringField(body, 'username'),
+        emailCode: readStringField(body, 'emailCode'),
         context,
       });
     } catch (error) {
@@ -139,6 +141,8 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
 
   server.post<{ Body: AuthBody }>('/api/v1/auth/login', async (request, reply) => {
     try {
+      const body = readRequestBody(request.body);
+      const remember = body.remember === true;
       const context = createAuthRequestContext(request, reply, config.authCookieSecure);
       const loginInput: {
         email: string;
@@ -149,22 +153,22 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
         automationTrap?: string;
         context: ReturnType<typeof createAuthRequestContext>;
       } = {
-        email: request.body.email ?? '',
-        password: request.body.password ?? '',
-        remember: request.body.remember === true,
+        email: readStringField(body, 'email'),
+        password: readStringField(body, 'password'),
+        remember,
         context,
       };
 
-      if (request.body.challengeId !== undefined) {
-        loginInput.challengeId = request.body.challengeId;
+      if (body.challengeId !== undefined) {
+        loginInput.challengeId = readStringField(body, 'challengeId');
       }
 
-      if (request.body.challengeAnswer !== undefined) {
-        loginInput.challengeAnswer = request.body.challengeAnswer;
+      if (body.challengeAnswer !== undefined) {
+        loginInput.challengeAnswer = readStringField(body, 'challengeAnswer');
       }
 
-      if (request.body.automationTrap !== undefined) {
-        loginInput.automationTrap = request.body.automationTrap;
+      if (body.automationTrap !== undefined) {
+        loginInput.automationTrap = readStringField(body, 'automationTrap');
       }
 
       const session = await service.login(loginInput);
@@ -177,7 +181,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
         reply,
         session.token,
         config.authCookieSecure,
-        request.body.remember === true ? rememberedAuthCookieMaxAgeSeconds : null,
+        remember ? rememberedAuthCookieMaxAgeSeconds : null,
       );
 
       return session;
@@ -188,10 +192,11 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
 
   server.post<{ Body: AuthBody }>('/api/v1/auth/login/email-code', async (request, reply) => {
     try {
+      const body = readRequestBody(request.body);
       const context = createAuthRequestContext(request, reply, config.authCookieSecure);
       const session = await service.verifyLoginEmailCode({
-        loginTicket: request.body.loginTicket ?? '',
-        emailCode: request.body.emailCode ?? '',
+        loginTicket: readStringField(body, 'loginTicket'),
+        emailCode: readStringField(body, 'emailCode'),
         context,
       });
 
@@ -213,10 +218,11 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
 
   server.post<{ Body: AuthBody }>('/api/v1/auth/reset-password', async (request, reply) => {
     try {
+      const body = readRequestBody(request.body);
       return await service.resetPassword({
-        email: request.body.email ?? '',
-        password: request.body.password ?? '',
-        emailCode: request.body.emailCode ?? '',
+        email: readStringField(body, 'email'),
+        password: readStringField(body, 'password'),
+        emailCode: readStringField(body, 'emailCode'),
       });
     } catch (error) {
       return sendV1Error(reply, error);
@@ -554,6 +560,16 @@ function sendV1Error(reply: { status: (statusCode: number) => { send: (payload: 
   }
 
   throw error;
+}
+
+function readRequestBody(body: unknown): Record<string, unknown> {
+  return body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+}
+
+function readStringField(body: Record<string, unknown>, fieldName: string): string {
+  const value = body[fieldName];
+
+  return typeof value === 'string' ? value : '';
 }
 
 function createAuthRequestContext(request: FastifyRequest, reply: FastifyReply, secure: boolean): V1AuthRequestContext {
