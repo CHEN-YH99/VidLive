@@ -31,6 +31,8 @@ yarn-error.log*
 # Runtime-generated media and temporary files
 uploads/
 tmp/
+backups/
+server-backups/
 
 # OS/editor noise
 .DS_Store
@@ -43,3 +45,4 @@ Thumbs.db
 !readme*.md
 !**/README*.md
 !**/readme*.md
+!线上维护手册.md
