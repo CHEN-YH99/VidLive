@@ -480,7 +480,12 @@ export class ConversionService {
         draft: job.draft,
       });
       const packageStat = await stat(result.zipPath);
-      const fileName = `vidlive-beta-${job.id}.zip`;
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[-:]/g, '')
+        .replace(/\.\d{3}Z$/, '')
+        .replace('T', '-');
+      const fileName = `VidLive-${job.draft.presetId}-${timestamp}.zip`;
       const storedArtifact = await this.storageService.storeArtifact({
         jobId: job.id,
         fileName,
@@ -500,20 +505,20 @@ export class ConversionService {
       const androidMotionPhoto: CloudConversionDirectArtifact | null = result.androidMotionPhotoPath
         ? {
             kind: 'android-motion-photo',
-            fileName: 'motion-photo_MP.jpg',
+            fileName: `VidLive-motion-photo-${timestamp}.jpg`,
             sizeBytes: (await stat(result.androidMotionPhotoPath)).size,
             downloadUrl: `/api/conversions/cloud-jobs/${job.id}/android-motion-photo`,
           }
         : null;
       const previewPhoto: CloudConversionDirectArtifact = {
         kind: 'preview-photo',
-        fileName: 'photo.jpg',
+        fileName: `VidLive-photo-${timestamp}.jpg`,
         sizeBytes: (await stat(result.photoPath)).size,
         downloadUrl: `/api/conversions/cloud-jobs/${job.id}/preview-photo`,
       };
       const pairedVideo: CloudConversionDirectArtifact = {
         kind: 'paired-video',
-        fileName: 'video.mov',
+        fileName: `VidLive-video-${timestamp}.mov`,
         sizeBytes: (await stat(result.movPath)).size,
         downloadUrl: `/api/conversions/cloud-jobs/${job.id}/paired-video`,
       };

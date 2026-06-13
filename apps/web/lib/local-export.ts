@@ -58,7 +58,20 @@ export async function generateLocalExport(
   const preset = exportPresets[draft.presetId];
   const exportId = createExportId();
   const createdAt = new Date().toISOString();
-  const baseName = `${sanitizeFileName(removeExtension(file.name))}-${draft.presetId}-${exportId.slice(0, 8)}`;
+  const timestamp = new Date()
+    .toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+    .replace(/\//g, '')
+    .replace(/:/g, '')
+    .replace(/\s/g, '-');
+  const baseName = `VidLive-${sanitizeFileName(removeExtension(file.name))}-${draft.presetId}-${timestamp}`;
   const durationSeconds = Math.max(productLimits.minDurationSeconds, draft.endSeconds - draft.startSeconds);
   const warnings: string[] = [
     '当前本地导出的是 ZIP 素材包，不是 Android Motion Photo 单文件。',
