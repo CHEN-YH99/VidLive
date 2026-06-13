@@ -412,9 +412,5 @@ function createReadme(
 }
 
 function createAndroidMotionPhotoDraft(draft: ConversionDraft): ConversionDraft {
-  return {
-    ...draft,
-    aspectRatioId: '9:16',
-    fitMode: 'cover',
-  };
+  return draft;
 }
