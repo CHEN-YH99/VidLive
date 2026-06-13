@@ -1114,9 +1114,16 @@ export function VidLiveTool() {
     const startInput = document.getElementById('timeline-start-seconds') as HTMLInputElement | null;
     const keyframeInput = document.getElementById('timeline-keyframe-seconds') as HTMLInputElement | null;
 
+    console.log('[DEBUG] 生成前检查:');
+    console.log('[DEBUG] draft.startSeconds =', draft.startSeconds);
+    console.log('[DEBUG] draft.keyframeSeconds =', draft.keyframeSeconds);
+    console.log('[DEBUG] DOM startInput.value =', startInput?.value);
+    console.log('[DEBUG] DOM keyframeInput.value =', keyframeInput?.value);
+
     if (startInput) {
       const domStartValue = Number(startInput.value);
       if (!Number.isNaN(domStartValue) && domStartValue !== draft.startSeconds) {
+        console.log('[DEBUG] 检测到不一致，更新 startSeconds 从', draft.startSeconds, '到', domStartValue);
         updateStart(domStartValue);
         // 等一帧确保 state 更新完成
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1126,6 +1133,7 @@ export function VidLiveTool() {
     if (keyframeInput) {
       const domKeyframeValue = Number(keyframeInput.value);
       if (!Number.isNaN(domKeyframeValue) && domKeyframeValue !== draft.keyframeSeconds) {
+        console.log('[DEBUG] 检测到不一致，更新 keyframeSeconds 从', draft.keyframeSeconds, '到', domKeyframeValue);
         updateKeyframe(domKeyframeValue);
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
@@ -1147,7 +1155,11 @@ export function VidLiveTool() {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs?${createCloudQuery(draft)}`), {
+        const queryString = createCloudQuery(draft);
+        console.log('[DEBUG] 最终发送的 query:', queryString);
+        console.log('[DEBUG] 最终 draft.startSeconds:', draft.startSeconds);
+
+        const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs?${queryString}`), {
           method: 'POST',
           body: formData,
         });
