@@ -1125,11 +1125,7 @@ export function VidLiveTool() {
         const formData = new FormData();
         formData.append('file', file);
 
-        const queryString = createCloudQuery(draft);
-        console.log('[VidLive] Cloud job query:', queryString);
-        console.log('[VidLive] Draft startSeconds:', draft.startSeconds);
-
-        const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs?${queryString}`), {
+        const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs?${createCloudQuery(draft)}`), {
           method: 'POST',
           body: formData,
         });
@@ -4973,6 +4969,7 @@ function RangeField({
         max={safeMax}
         step={step}
         onChange={(event) => onChange(Number(event.target.value))}
+        onInput={(event) => onChange(Number(event.currentTarget.value))}
         className="h-7 w-full accent-[#ff715b]"
       />
     </label>
