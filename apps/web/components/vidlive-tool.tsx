@@ -50,6 +50,7 @@ import {
   failureAdvice,
   productLimits,
   supportedInputs,
+  type AspectRatioId,
   type CompatibilityDownloadResult,
   type CompatibilityOsName,
   type CompatibilityReportInput,
@@ -326,6 +327,7 @@ function getDefaultDraftForPreset(
     aspectRatioId: preset.preferredAspectRatio,
     startSeconds: 0,
     endSeconds,
+    clipDurationSeconds: clipDuration,
     keyframeSeconds,
   };
 }
@@ -1470,7 +1472,7 @@ export function VidLiveTool() {
                   onPlaybackTimeChange={setPlayheadSeconds}
                   onMetadataLoaded={syncMetadataDuration}
                 />
-                <CoverPreview coverUrl={coverUrl} isGif={Boolean(file && isGif(file))} open={open} />
+                <CoverPreview coverUrl={coverUrl} isGif={Boolean(file && isGif(file))} open={open} aspectRatioId={draft.aspectRatioId} />
               </section>
 
               <section className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -2097,12 +2099,30 @@ function useStartSyncedVideo(startSeconds: number, onPlaybackTimeChange: (second
   return videoRef;
 }
 
-function CoverPreview({ coverUrl, isGif, open }: { coverUrl: string | null; isGif: boolean; open: () => void }) {
+function CoverPreview({
+  coverUrl,
+  isGif,
+  open,
+  aspectRatioId,
+}: {
+  coverUrl: string | null;
+  isGif: boolean;
+  open: () => void;
+  aspectRatioId: AspectRatioId;
+}) {
+  const aspectClass = {
+    'source': 'aspect-video',
+    '9:16': 'aspect-[9/16]',
+    '1:1': 'aspect-square',
+    '4:5': 'aspect-[4/5]',
+    '16:9': 'aspect-video',
+  }[aspectRatioId];
+
   return (
     <section className="clay-card grid gap-3 bg-white p-4">
       <div>
         <p className="mb-2 text-sm font-black text-ink">关键帧预览</p>
-        <div className="aspect-[9/16] w-full overflow-hidden rounded-lg border-2 border-ink/15 bg-[#fff4df]">
+        <div className={`${aspectClass} w-full overflow-hidden rounded-lg border-2 border-ink/15 bg-[#fff4df]`}>
           {coverUrl ? (
             <img src={coverUrl} alt="" className="h-full w-full object-cover" />
           ) : (
