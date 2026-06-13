@@ -1816,6 +1816,7 @@ export function VidLiveTool() {
             exportResult={exportResult}
             packageArtifact={packageArtifact}
             downloadingSource={downloadBusySource}
+            aspectRatioId={draft.aspectRatioId}
             onOpenChange={setGenerationDialogOpen}
             onCloudDownload={(download) => {
               void downloadCloudArtifact(download);
@@ -2384,10 +2385,12 @@ function ExportResultPanel({
   result,
   packageArtifact,
   onDownload,
+  aspectRatioId,
 }: {
   result: LocalExportResult;
   packageArtifact: LocalExportArtifact;
   onDownload: (artifact: LocalExportArtifact) => void;
+  aspectRatioId: AspectRatioId;
 }) {
   const previewArtifact = useMemo(
     () =>
@@ -2421,11 +2424,22 @@ function ExportResultPanel({
         </p>
       </div>
       {resultPreviewUrl && previewArtifact && (
-        <div aria-label="导出结果预览" className="mt-3 overflow-hidden rounded-lg border-2 border-ink bg-ink">
+        <div
+          aria-label="导出结果预览"
+          className={`mt-3 overflow-hidden rounded-lg border-2 border-ink bg-ink ${
+            {
+              'source': 'aspect-video',
+              '9:16': 'aspect-[9/16]',
+              '1:1': 'aspect-square',
+              '4:5': 'aspect-[4/5]',
+              '16:9': 'aspect-video',
+            }[aspectRatioId]
+          }`}
+        >
           {previewArtifact.kind === 'cover' ? (
-            <img src={resultPreviewUrl} alt="" className="h-44 w-full object-contain" />
+            <img src={resultPreviewUrl} alt="" className="h-full w-full object-contain" />
           ) : (
-            <video src={resultPreviewUrl} className="h-44 w-full object-contain" muted playsInline controls />
+            <video src={resultPreviewUrl} className="h-full w-full object-contain" muted playsInline controls />
           )}
         </div>
       )}
@@ -4088,6 +4102,7 @@ function GenerationDialog({
   onCloudDownload,
   onLocalDownload,
   onDeleteCloudJob,
+  aspectRatioId,
 }: {
   open: boolean;
   status: GenerationStatus;
@@ -4105,6 +4120,7 @@ function GenerationDialog({
   onCloudDownload: (download: CloudDownloadRequest) => void;
   onLocalDownload: (artifact: LocalExportArtifact) => void;
   onDeleteCloudJob: () => Promise<void>;
+  aspectRatioId: AspectRatioId;
 }) {
   useEffect(() => {
     if (!open) {
@@ -4227,6 +4243,7 @@ function GenerationDialog({
                 result={exportResult}
                 packageArtifact={packageArtifact}
                 onDownload={onLocalDownload}
+                aspectRatioId={aspectRatioId}
               />
             )}
           </div>
