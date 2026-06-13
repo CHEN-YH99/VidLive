@@ -1125,7 +1125,11 @@ export function VidLiveTool() {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs?${createCloudQuery(draft)}`), {
+        const queryString = createCloudQuery(draft);
+        console.log('[VidLive] Cloud job query:', queryString);
+        console.log('[VidLive] Draft startSeconds:', draft.startSeconds);
+
+        const response = await fetch(toApiUrl(`/api/conversions/cloud-jobs?${queryString}`), {
           method: 'POST',
           body: formData,
         });
