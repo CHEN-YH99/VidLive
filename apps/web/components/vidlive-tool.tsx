@@ -74,6 +74,7 @@ import {
 } from '@/lib/file-inspector';
 import { clamp, formatBytes, formatSeconds } from '@/lib/format';
 import { downloadBlob, generateLocalExport, type LocalExportArtifact, type LocalExportResult } from '@/lib/local-export';
+import { LoadingOverlay } from '@/components/loading-spinner';
 
 const initialPreset = exportPresets['ios-lock-screen'];
 
@@ -1943,6 +1944,7 @@ function UploadPanel({
         </div>
       </div>
       <div className="relative overflow-hidden rounded-lg border-2 border-ink bg-ink">
+        {isReading && <LoadingOverlay message="正在解析文件..." />}
         {previewUrl && file && !isGif(file) && isEdgeBrowser() && (
           <div className="absolute left-0 right-0 top-0 z-10 mx-4 mt-4">
             <div className="rounded-lg border-2 border-amber-600 bg-amber-50 px-4 py-3 shadow-lg">
@@ -5183,7 +5185,10 @@ function ProgressBar({ value, label }: { value: number; label: string }) {
   return (
     <div className="clay-card bg-white p-4">
       <div className="mb-2 flex items-center justify-between text-sm font-black text-ink">
-        <span>{label}</span>
+        <span className="flex items-center gap-2">
+          <Loader2 size={16} className="animate-spin text-[#6aa9ff]" />
+          {label}
+        </span>
         <span>{value}%</span>
       </div>
       <div className="h-4 overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df]">
