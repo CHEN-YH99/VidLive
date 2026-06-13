@@ -1109,6 +1109,28 @@ export function VidLiveTool() {
       return;
     }
 
+    // 手机端 range input 的 onChange/onInput 可能不触发或延迟触发
+    // 生成前强制从 DOM 读取实际值并同步到 state
+    const startInput = document.getElementById('timeline-start-seconds') as HTMLInputElement | null;
+    const keyframeInput = document.getElementById('timeline-keyframe-seconds') as HTMLInputElement | null;
+
+    if (startInput) {
+      const domStartValue = Number(startInput.value);
+      if (!Number.isNaN(domStartValue) && domStartValue !== draft.startSeconds) {
+        updateStart(domStartValue);
+        // 等一帧确保 state 更新完成
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+
+    if (keyframeInput) {
+      const domKeyframeValue = Number(keyframeInput.value);
+      if (!Number.isNaN(domKeyframeValue) && domKeyframeValue !== draft.keyframeSeconds) {
+        updateKeyframe(domKeyframeValue);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+
     setFailureReason(null);
     setGenerationFeedbackAvailable(true);
     setExportResult(null);
@@ -1445,6 +1467,7 @@ export function VidLiveTool() {
                     </div>
                   </div>
                   <RangeField
+                    id="timeline-start-seconds"
                     label="起点"
                     value={draft.startSeconds}
                     min={0}
@@ -1458,6 +1481,7 @@ export function VidLiveTool() {
                     hint={`起点 + ${formatSeconds(clipTargetDuration)}`}
                   />
                   <RangeField
+                    id="timeline-keyframe-seconds"
                     label="关键帧"
                     value={draft.keyframeSeconds}
                     min={draft.startSeconds}
@@ -4946,6 +4970,7 @@ function RangeField({
   max,
   step,
   onChange,
+  id,
 }: {
   label: string;
   value: number;
@@ -4953,6 +4978,7 @@ function RangeField({
   max: number;
   step: number;
   onChange: (value: number) => void;
+  id?: string;
 }) {
   const safeMax = Math.max(max, min);
 
@@ -4963,6 +4989,7 @@ function RangeField({
         <span className="font-mono text-xs text-ink">{formatSeconds(value)}</span>
       </span>
       <input
+        id={id}
         type="range"
         value={clamp(value, min, safeMax)}
         min={min}
