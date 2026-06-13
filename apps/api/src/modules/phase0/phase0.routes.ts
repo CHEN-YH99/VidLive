@@ -195,6 +195,7 @@ function createDraftFromQuery(query: PhaseZeroPocQuery): ConversionDraft {
     saturation: readNumber(query.saturation, 100),
     startSeconds,
     endSeconds,
+    clipDurationSeconds: endSeconds - startSeconds,
     keyframeSeconds,
     muted: query.muted !== 'false',
   };

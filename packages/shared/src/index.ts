@@ -2,7 +2,8 @@ export const productLimits = {
   localFileSizeBytes: 100 * 1024 * 1024,
   cloudFileSizeBytes: 500 * 1024 * 1024,
   minDurationSeconds: 1,
-  livePhotoMaxDurationSeconds: 3,
+  livePhotoMinDurationSeconds: 3,
+  livePhotoMaxDurationSeconds: 7,
   recommendedMaxDurationSeconds: 30,
   localTargetDurationSeconds: 10,
 } as const;
@@ -50,7 +51,7 @@ export const exportPresets: Record<ExportPresetId, ExportPreset> = {
   'standard-live-photo': {
     id: 'standard-live-photo',
     label: '标准安卓实况图',
-    target: '标准动态照片片段，最长 3 秒',
+    target: '标准动态照片片段，标准 3 秒',
     defaultDurationSeconds: 3,
     maxDurationSeconds: productLimits.livePhotoMaxDurationSeconds,
     preferredAspectRatio: 'source',
@@ -178,6 +179,7 @@ export interface ConversionDraft {
   saturation: number;
   startSeconds: number;
   endSeconds: number;
+  clipDurationSeconds: number;
   keyframeSeconds: number;
   muted: boolean;
 }

@@ -90,6 +90,7 @@ const initialDraft: ConversionDraft = {
   saturation: 100,
   startSeconds: 0,
   endSeconds: initialPreset.defaultDurationSeconds,
+  clipDurationSeconds: initialPreset.defaultDurationSeconds,
   keyframeSeconds: initialPreset.defaultDurationSeconds / 2,
   muted: true,
 };
@@ -1040,14 +1041,30 @@ export function VidLiveTool() {
   const updateStart = (value: number) => {
     clearGenerationFeedback();
     setDraft((current) => {
-      const preset = exportPresets[current.presetId];
-      const nextClipDuration = getTargetClipDuration(preset, sourceDurationMax);
-      const nextStart = clamp(value, 0, Math.max(0, sourceDurationMax - nextClipDuration));
-      const nextEnd = nextStart + nextClipDuration;
-      const nextKeyframe = nextStart + nextClipDuration / 2;
+      const nextStart = clamp(value, 0, Math.max(0, sourceDurationMax - current.clipDurationSeconds));
+      const nextEnd = nextStart + current.clipDurationSeconds;
+      const nextKeyframe = clamp(current.keyframeSeconds, nextStart, nextEnd);
 
       return {
         ...current,
+        startSeconds: nextStart,
+        endSeconds: nextEnd,
+        keyframeSeconds: nextKeyframe,
+      };
+    });
+  };
+
+  const updateClipDuration = (value: number) => {
+    clearGenerationFeedback();
+    setDraft((current) => {
+      const nextDuration = clamp(value, productLimits.livePhotoMinDurationSeconds, productLimits.livePhotoMaxDurationSeconds);
+      const nextStart = clamp(current.startSeconds, 0, Math.max(0, sourceDurationMax - nextDuration));
+      const nextEnd = nextStart + nextDuration;
+      const nextKeyframe = clamp(current.keyframeSeconds, nextStart, nextEnd);
+
+      return {
+        ...current,
+        clipDurationSeconds: nextDuration,
         startSeconds: nextStart,
         endSeconds: nextEnd,
         keyframeSeconds: nextKeyframe,
@@ -1485,10 +1502,32 @@ export function VidLiveTool() {
                     step={0.1}
                     onChange={updateStart}
                   />
+                  <RangeField
+                    id="timeline-clip-duration"
+                    label="实况时长"
+                    value={draft.clipDurationSeconds}
+                    min={productLimits.livePhotoMinDurationSeconds}
+                    max={productLimits.livePhotoMaxDurationSeconds}
+                    step={0.1}
+                    onChange={updateClipDuration}
+                  />
+                  {draft.startSeconds + draft.clipDurationSeconds > sourceDurationMax && (
+                    <div className="mb-3 rounded-lg border-2 border-amber-600 bg-amber-50 px-3 py-2">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-amber-600" />
+                        <div className="flex-1 text-xs">
+                          <p className="font-bold text-amber-900">时长超出素材范围</p>
+                          <p className="mt-1 text-amber-800">
+                            起点 {formatSeconds(draft.startSeconds)} + 时长 {formatSeconds(draft.clipDurationSeconds)} 超出素材总长 {formatSeconds(sourceDurationMax)}，已自动调整起点。
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <ReadonlyTimelineField
                     label="终点"
                     value={draft.endSeconds}
-                    hint={`起点 + ${formatSeconds(clipTargetDuration)}`}
+                    hint={`起点 + ${formatSeconds(draft.clipDurationSeconds)}`}
                   />
                   <RangeField
                     id="timeline-keyframe-seconds"
