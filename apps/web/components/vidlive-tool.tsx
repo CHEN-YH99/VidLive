@@ -345,6 +345,14 @@ function isCloudJobActive(job: CloudJob | null): boolean {
   return job?.status === 'queued' || job?.status === 'processing';
 }
 
+function isEdgeBrowser(): boolean {
+  if (typeof window === 'undefined' || !window.navigator) {
+    return false;
+  }
+  const userAgent = window.navigator.userAgent.toLowerCase();
+  return userAgent.includes('edg/') || userAgent.includes('edge/');
+}
+
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, milliseconds);
@@ -1906,6 +1914,21 @@ function UploadPanel({
         </div>
       </div>
       <div className="relative overflow-hidden rounded-lg border-2 border-ink bg-ink">
+        {previewUrl && file && !isGif(file) && isEdgeBrowser() && (
+          <div className="absolute left-0 right-0 top-0 z-10 mx-4 mt-4">
+            <div className="rounded-lg border-2 border-amber-600 bg-amber-50 px-4 py-3 shadow-lg">
+              <div className="flex items-start gap-3">
+                <AlertTriangle size={20} className="mt-0.5 flex-shrink-0 text-amber-600" />
+                <div className="flex-1 text-sm">
+                  <p className="font-bold text-amber-900">视频预览可能无法加载</p>
+                  <p className="mt-1 text-amber-800">
+                    Edge 浏览器对部分视频编码支持不佳。建议使用 Chrome 浏览器以获得最佳体验。
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {previewUrl && file ? (
           isGif(file) ? (
             <img src={previewUrl} alt="" className="h-full min-h-52 w-full object-contain" />
