@@ -1111,6 +1111,9 @@ export function VidLiveTool() {
 
     // 手机端 range input 的 onChange/onInput 可能不触发或延迟触发
     // 生成前强制从 DOM 读取实际值并同步到 state
+    // 等待一小段时间确保浏览器完成渲染和值更新
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
     const startInput = document.getElementById('timeline-start-seconds') as HTMLInputElement | null;
     const keyframeInput = document.getElementById('timeline-keyframe-seconds') as HTMLInputElement | null;
 
@@ -1125,8 +1128,8 @@ export function VidLiveTool() {
       if (!Number.isNaN(domStartValue) && domStartValue !== draft.startSeconds) {
         console.log('[DEBUG] 检测到不一致，更新 startSeconds 从', draft.startSeconds, '到', domStartValue);
         updateStart(domStartValue);
-        // 等一帧确保 state 更新完成
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        // 多等几帧确保 state 更新完成（Edge 可能需要更多时间）
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
@@ -1135,7 +1138,7 @@ export function VidLiveTool() {
       if (!Number.isNaN(domKeyframeValue) && domKeyframeValue !== draft.keyframeSeconds) {
         console.log('[DEBUG] 检测到不一致，更新 keyframeSeconds 从', draft.keyframeSeconds, '到', domKeyframeValue);
         updateKeyframe(domKeyframeValue);
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
