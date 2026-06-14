@@ -3386,7 +3386,7 @@ function DisclaimerDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             <div>
               <p className="font-black">5. 服务保证</p>
               <p className="mt-1">
-                本工具按"现状"提供，不提供任何形式的明示或暗示保证，包括但不限于适销性、特定用途适用性和非侵权性的保证。
+                本工具按&ldquo;现状&rdquo;提供，不提供任何形式的明示或暗示保证，包括但不限于适销性、特定用途适用性和非侵权性的保证。
               </p>
             </div>
 
