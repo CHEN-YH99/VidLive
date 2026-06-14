@@ -40,7 +40,9 @@ export interface AppConfig {
   emailCodeSmtpTimeoutMilliseconds: number;
 }
 
-const builtInPermanentMemberEmails = ['1139189851@qq.com'];
+// 移除硬编码邮箱，改为从环境变量读取
+// 使用环境变量 PERMANENT_MEMBER_EMAILS 配置永久会员邮箱
+// 格式：PERMANENT_MEMBER_EMAILS="email1@example.com,email2@example.com"
 
 const INSECURE_JWT_SECRET = 'dev-vidlive-secret-change-me';
 const MIN_JWT_SECRET_LENGTH = 32;
@@ -142,7 +144,7 @@ export function loadConfig(): AppConfig {
     jwtSecret: resolveJwtSecret(),
     authCookieSecure: resolveAuthCookieSecure(),
     v1StorePath: process.env.V1_STORE_PATH ?? './data/v1-store.json',
-    permanentMemberEmails: [...new Set([...builtInPermanentMemberEmails, ...readEmailList('PERMANENT_MEMBER_EMAILS')])],
+    permanentMemberEmails: readEmailList('PERMANENT_MEMBER_EMAILS'),
     emailCodeWebhookUrl: readOptionalString('EMAIL_CODE_WEBHOOK_URL'),
     emailCodeFrom: process.env.EMAIL_CODE_FROM ?? 'VidLive <no-reply@vidlive.local>',
     emailCodeLogEnabled: process.env.EMAIL_CODE_LOG_ENABLED
