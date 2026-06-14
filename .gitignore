@@ -45,4 +45,7 @@ Thumbs.db
 !readme*.md
 !**/README*.md
 !**/readme*.md
-!线上维护手册.md
+
+# 线上维护手册包含敏感信息（服务器 IP、架构等），不应上传 GitHub
+# 改为本地保存或使用私有文档管理工具
+线上维护手册.md
