@@ -730,6 +730,7 @@ export function VidLiveTool() {
   const [cloudJob, setCloudJob] = useState<CloudJob | null>(null);
   const [cloudConsentConfirmed, setCloudConsentConfirmed] = useState(false);
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+  const [disclaimerDialogOpen, setDisclaimerDialogOpen] = useState(false);
   const [compatibilityDialogOpen, setCompatibilityDialogOpen] = useState(false);
   const [lastSuccessfulDownload, setLastSuccessfulDownload] = useState<CompatibilityDownloadContext | null>(null);
   const [downloadBusySource, setDownloadBusySource] = useState<CloudDownloadRequest['source'] | null>(null);
@@ -1811,7 +1812,18 @@ export function VidLiveTool() {
                   className="mt-1 h-4 w-4 accent-[#23b7a4]"
                 />
                 <span>
-                  我已阅读并同意《免责声明》：本工具仅供学习研究使用，我确认拥有素材的合法使用权，不会用于任何违法用途，并自行承担使用责任。
+                  我已阅读并同意
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setDisclaimerDialogOpen(true);
+                    }}
+                    className="mx-1 text-[#23b7a4] underline hover:text-[#1a8f7f]"
+                  >
+                    《免责声明》
+                  </button>
+                  ：本工具仅供学习研究使用，我确认拥有素材的合法使用权，不会用于任何违法用途，并自行承担使用责任。
                 </span>
               </label>
 
@@ -1903,6 +1915,7 @@ export function VidLiveTool() {
             onOpenChange={setAuthDialogOpen}
             onAuthSuccess={handleAuthSuccess}
           />
+          <DisclaimerDialog open={disclaimerDialogOpen} onOpenChange={setDisclaimerDialogOpen} />
           <LogoutConfirmDialog
             open={logoutConfirmOpen && Boolean(authSession)}
             user={authSession?.user ?? null}
@@ -3307,6 +3320,98 @@ function rotateRight(value: number, bits: number): number {
 
 function bytesToHex(bytes: Uint8Array): string {
   return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function DisclaimerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/45 p-3">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="disclaimer-title"
+        className="w-full max-w-2xl overflow-hidden rounded-lg border-2 border-ink bg-[#fff4df] shadow-clay"
+      >
+        <div className="flex items-center justify-between border-b-2 border-ink bg-white p-4">
+          <h2 id="disclaimer-title" className="text-lg font-black text-ink">
+            免责声明
+          </h2>
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-clay-sm transition hover:-translate-y-0.5"
+          >
+            <X size={17} />
+          </button>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto p-5">
+          <div className="space-y-4 text-sm leading-relaxed text-ink">
+            <p className="font-bold">
+              请您仔细阅读以下条款。使用本工具即表示您已阅读、理解并同意接受以下全部内容：
+            </p>
+
+            <div>
+              <p className="font-black">1. 使用范围</p>
+              <p className="mt-1">本工具仅供学习、研究和技术交流使用，不得用于任何商业用途。</p>
+            </div>
+
+            <div>
+              <p className="font-black">2. 版权声明</p>
+              <p className="mt-1">
+                使用本工具生成的素材，请确保您拥有原始视频的合法使用权。未经授权使用他人作品可能侵犯其知识产权。
+              </p>
+            </div>
+
+            <div>
+              <p className="font-black">3. 禁止行为</p>
+              <p className="mt-1">严禁使用本工具处理、传播任何违反法律法规的内容，包括但不限于：</p>
+              <ul className="mt-2 list-inside list-disc space-y-1 pl-4">
+                <li>侵犯他人知识产权的内容</li>
+                <li>涉及色情、暴力、恐怖主义的内容</li>
+                <li>侵犯他人隐私或肖像权的内容</li>
+                <li>其他违反当地法律法规的内容</li>
+              </ul>
+            </div>
+
+            <div>
+              <p className="font-black">4. 责任声明</p>
+              <p className="mt-1">
+                用户在使用本工具时应遵守所在国家和地区的法律法规，因使用本工具产生的任何法律责任由用户自行承担，本工具开发者不承担任何责任。
+              </p>
+            </div>
+
+            <div>
+              <p className="font-black">5. 服务保证</p>
+              <p className="mt-1">
+                本工具按"现状"提供，不提供任何形式的明示或暗示保证，包括但不限于适销性、特定用途适用性和非侵权性的保证。
+              </p>
+            </div>
+
+            <div>
+              <p className="font-black">6. 服务变更</p>
+              <p className="mt-1">本工具开发者保留随时修改、暂停或终止服务的权利，无需事先通知。</p>
+            </div>
+
+            <p className="mt-6 rounded-lg border-2 border-ink bg-[#ffe2dc] p-3 font-bold text-ink">
+              ⚠️ 重要提示：使用本工具即表示您已阅读、理解并同意遵守以上全部条款。如果您不同意，请立即停止使用本工具。
+            </p>
+          </div>
+        </div>
+        <div className="border-t-2 border-ink bg-white p-4">
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            className="w-full rounded-lg border-2 border-ink bg-[#23b7a4] py-3 text-sm font-black text-white shadow-clay-sm transition hover:-translate-y-0.5"
+          >
+            我已阅读并理解
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function AuthDialog({
