@@ -253,15 +253,15 @@ export class V1AuthStore {
     const result = await this.pool.query<UserRow>(
       `update users
           set local_used_today = case
-                when quota_reset_date < current_date then 0
+                when quota_reset_date < (current_date at time zone 'UTC' at time zone 'Asia/Shanghai')::date then 0
                 else local_used_today
               end,
               cloud_used_today = case
-                when quota_reset_date < current_date then 0
+                when quota_reset_date < (current_date at time zone 'UTC' at time zone 'Asia/Shanghai')::date then 0
                 else cloud_used_today
               end,
               quota_reset_date = case
-                when quota_reset_date < current_date then current_date
+                when quota_reset_date < (current_date at time zone 'UTC' at time zone 'Asia/Shanghai')::date then (current_date at time zone 'UTC' at time zone 'Asia/Shanghai')::date
                 else quota_reset_date
               end,
               updated_at = now()

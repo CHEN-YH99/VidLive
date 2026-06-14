@@ -629,10 +629,6 @@ function formatPlanBadge(user: AuthUser): string {
   return '免费版';
 }
 
-function formatUserQuota(user: AuthUser): string {
-  return user.dailyQuota < 0 ? '无限' : `${user.dailyQuota} 次/日`;
-}
-
 function formatUserCreatedDate(user: AuthUser): string {
   const createdDate = new Date(user.createdAt);
 
@@ -1305,12 +1301,24 @@ export function VidLiveTool() {
 
       setAuthSession(nextSession);
 
-      if (draft.mode === 'cloud' && payload.user.planType !== 'pro') {
+      // 不再限制免费用户使用云端模式，改为检查云端配额
+      if (draft.mode === 'cloud' && !isUnlimitedUsage(payload.usage) && payload.usage.cloudRemaining <= 0) {
         setGenerationAccess({
-          kind: 'pro-required',
+          kind: 'quota-exhausted',
           usage: payload.usage,
           resource: null,
-          message: '云端安卓实况图需要专业版导出额度，免费账号可改用本地生成。',
+          message: '今日云端生成额度已用完，可改用本地生成或明天再试。',
+        });
+        setGenerationAccessDialogOpen(true);
+        return;
+      }
+
+      if (draft.mode === 'local' && !isUnlimitedUsage(payload.usage) && payload.usage.localRemaining <= 0) {
+        setGenerationAccess({
+          kind: 'quota-exhausted',
+          usage: payload.usage,
+          resource: null,
+          message: '今日本地生成额度已用完，可改用云端生成或明天再试。',
         });
         setGenerationAccessDialogOpen(true);
         return;
@@ -1405,6 +1413,16 @@ export function VidLiveTool() {
           ...generationAccess,
           usage: payload,
         });
+
+        // 重新获取用户信息以更新显示的配额
+        try {
+          const updatedSession = await fetchCurrentAuthSession();
+          if (updatedSession) {
+            setAuthSession(updatedSession);
+          }
+        } catch {
+          // 忽略错误，配额已扣除成功
+        }
       }
 
       setGenerationAccessDialogOpen(false);
@@ -2733,7 +2751,6 @@ function AuthEntryButton({
   if (session) {
     const initials = getUserInitials(session.user.username);
     const planLabel = formatPlanLabel(session);
-    const quotaLabel = formatUserQuota(session.user);
     const createdDateLabel = formatUserCreatedDate(session.user);
 
     return (
