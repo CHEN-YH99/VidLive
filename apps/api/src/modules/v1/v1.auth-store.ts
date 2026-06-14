@@ -7,6 +7,11 @@ export interface StoredUserRecord {
   passwordHash: string;
   planType: 'free' | 'pro';
   dailyQuota: number;
+  localQuotaDaily: number;
+  cloudQuotaDaily: number;
+  localUsedToday: number;
+  cloudUsedToday: number;
+  quotaResetDate: string;
   createdAt: string;
   failedLoginCount: number;
   lockedUntil: string | null;
@@ -63,6 +68,11 @@ type UserRow = {
   password_hash: string;
   plan_type: string;
   daily_quota: number;
+  local_quota_daily: number | null;
+  cloud_quota_daily: number | null;
+  local_used_today: number | null;
+  cloud_used_today: number | null;
+  quota_reset_date: Date | null;
   created_at: Date;
   failed_login_count: number | null;
   locked_until: Date | null;
@@ -110,7 +120,8 @@ export class V1AuthStore {
   async findUserByEmail(email: string): Promise<StoredUserRecord | null> {
     const result = await this.pool.query<UserRow>(
       `select id, email, username, password_hash, plan_type, daily_quota, created_at,
-              failed_login_count, locked_until, last_login_at
+              failed_login_count, locked_until, last_login_at,
+              local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date
          from users
         where email = $1
         limit 1`,
@@ -123,7 +134,8 @@ export class V1AuthStore {
   async findUserById(id: string): Promise<StoredUserRecord | null> {
     const result = await this.pool.query<UserRow>(
       `select id, email, username, password_hash, plan_type, daily_quota, created_at,
-              failed_login_count, locked_until, last_login_at
+              failed_login_count, locked_until, last_login_at,
+              local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date
          from users
         where id = $1
         limit 1`,
@@ -146,7 +158,8 @@ export class V1AuthStore {
       `insert into users (id, email, username, password_hash, plan_type, daily_quota, password_changed_at)
        values ($1, $2, $3, $4, $5, $6, now())
        returning id, email, username, password_hash, plan_type, daily_quota, created_at,
-                 failed_login_count, locked_until, last_login_at`,
+                 failed_login_count, locked_until, last_login_at,
+                 local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date`,
       [input.id, input.email, input.username, input.passwordHash, input.planType, input.dailyQuota],
     );
     const row = result.rows[0];
@@ -167,7 +180,8 @@ export class V1AuthStore {
               updated_at = now()
         where id = $1
         returning id, email, username, password_hash, plan_type, daily_quota, created_at,
-                  failed_login_count, locked_until, last_login_at`,
+                  failed_login_count, locked_until, last_login_at,
+                  local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date`,
       [userId],
     );
 
@@ -193,7 +207,8 @@ export class V1AuthStore {
               updated_at = now()
         where id = $1
         returning id, email, username, password_hash, plan_type, daily_quota, created_at,
-                  failed_login_count, locked_until, last_login_at`,
+                  failed_login_count, locked_until, last_login_at,
+                  local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date`,
       [userId],
     );
 
@@ -208,7 +223,8 @@ export class V1AuthStore {
               updated_at = now()
         where id = $1
         returning id, email, username, password_hash, plan_type, daily_quota, created_at,
-                  failed_login_count, locked_until, last_login_at`,
+                  failed_login_count, locked_until, last_login_at,
+                  local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date`,
       [userId, planType, dailyQuota],
     );
 
@@ -225,7 +241,8 @@ export class V1AuthStore {
               updated_at = now()
         where id = $1
         returning id, email, username, password_hash, plan_type, daily_quota, created_at,
-                  failed_login_count, locked_until, last_login_at`,
+                  failed_login_count, locked_until, last_login_at,
+                  local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date`,
       [userId, passwordHash],
     );
 
@@ -431,6 +448,14 @@ async function ensureUsersTable(client: PoolClient): Promise<void> {
   await client.query(`alter table users add column if not exists locked_until timestamptz`);
   await client.query(`alter table users add column if not exists last_login_at timestamptz`);
   await client.query(`alter table users add column if not exists password_changed_at timestamptz not null default now()`);
+
+  // 新增：本地和云端独立配额
+  await client.query(`alter table users add column if not exists local_quota_daily integer not null default 10`);
+  await client.query(`alter table users add column if not exists cloud_quota_daily integer not null default 5`);
+  await client.query(`alter table users add column if not exists local_used_today integer not null default 0`);
+  await client.query(`alter table users add column if not exists cloud_used_today integer not null default 0`);
+  await client.query(`alter table users add column if not exists quota_reset_date date not null default current_date`);
+
   await client.query(`create unique index if not exists users_email_lower_idx on users (lower(email))`);
   await client.query(`create unique index if not exists users_username_lower_idx on users (lower(username))`);
 }
@@ -495,6 +520,9 @@ async function ensureKnownAuthDevicesTable(client: PoolClient): Promise<void> {
 }
 
 function mapUserRow(row: UserRow): StoredUserRecord {
+  const today = new Date().toISOString().substring(0, 10);
+  const quotaResetDate = row.quota_reset_date ? row.quota_reset_date.toISOString().substring(0, 10) : today;
+
   return {
     id: row.id,
     email: row.email,
@@ -502,6 +530,11 @@ function mapUserRow(row: UserRow): StoredUserRecord {
     passwordHash: row.password_hash,
     planType: row.plan_type === 'pro' ? 'pro' : 'free',
     dailyQuota: row.daily_quota,
+    localQuotaDaily: row.local_quota_daily ?? 10,
+    cloudQuotaDaily: row.cloud_quota_daily ?? 5,
+    localUsedToday: row.local_used_today ?? 0,
+    cloudUsedToday: row.cloud_used_today ?? 0,
+    quotaResetDate,
     createdAt: row.created_at.toISOString(),
     failedLoginCount: row.failed_login_count ?? 0,
     lockedUntil: row.locked_until?.toISOString() ?? null,

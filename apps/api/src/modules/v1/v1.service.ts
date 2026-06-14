@@ -52,6 +52,8 @@ export interface V1UserProfile {
   username: string;
   planType: 'free' | 'pro';
   dailyQuota: number;
+  localQuotaDaily: number;
+  cloudQuotaDaily: number;
   createdAt: string;
 }
 
@@ -59,6 +61,12 @@ export interface V1UsageSummary {
   quotaLimit: number;
   usedToday: number;
   remainingToday: number;
+  localLimit: number;
+  localUsed: number;
+  localRemaining: number;
+  cloudLimit: number;
+  cloudUsed: number;
+  cloudRemaining: number;
 }
 
 export interface V1AuthChallenge {
@@ -114,6 +122,9 @@ interface StoredUser extends V1UserProfile {
   failedLoginCount: number;
   lockedUntil: string | null;
   lastLoginAt: string | null;
+  localUsedToday: number;
+  cloudUsedToday: number;
+  quotaResetDate: string;
 }
 
 interface UsageLog {
@@ -372,10 +383,16 @@ export class V1Service {
       dailyQuota: initialPlan.dailyQuota,
     } as const;
     const now = new Date().toISOString();
+    const today = now.substring(0, 10);
     const user: StoredUser = this.authStore
       ? toStoredUser(await this.authStore.createUser(userInput))
       : {
           ...userInput,
+          localQuotaDaily: initialPlan.planType === 'free' ? 10 : (initialPlan.dailyQuota < 0 ? -1 : 999),
+          cloudQuotaDaily: initialPlan.planType === 'free' ? 5 : (initialPlan.dailyQuota < 0 ? -1 : 30),
+          localUsedToday: 0,
+          cloudUsedToday: 0,
+          quotaResetDate: today,
           createdAt: now,
           failedLoginCount: 0,
           lockedUntil: null,
@@ -1139,11 +1156,21 @@ export class V1Service {
       return log.userId === userId && log.action === 'conversion.created' && isToday(log.timestamp);
     }).length;
 
+    // 计算本地和云端使用次数
+    const localUsed = user.localUsedToday;
+    const cloudUsed = user.cloudUsedToday;
+
     if (isUnlimitedDailyQuota(user.dailyQuota)) {
       return {
         quotaLimit: unlimitedDailyQuota,
         usedToday,
         remainingToday: unlimitedDailyQuota,
+        localLimit: unlimitedDailyQuota,
+        localUsed,
+        localRemaining: unlimitedDailyQuota,
+        cloudLimit: unlimitedDailyQuota,
+        cloudUsed,
+        cloudRemaining: unlimitedDailyQuota,
       };
     }
 
@@ -1151,6 +1178,12 @@ export class V1Service {
       quotaLimit: user.dailyQuota,
       usedToday,
       remainingToday: Math.max(0, user.dailyQuota - usedToday),
+      localLimit: user.localQuotaDaily,
+      localUsed,
+      localRemaining: Math.max(0, user.localQuotaDaily - localUsed),
+      cloudLimit: user.cloudQuotaDaily,
+      cloudUsed,
+      cloudRemaining: Math.max(0, user.cloudQuotaDaily - cloudUsed),
     };
   }
 
@@ -2033,6 +2066,8 @@ function toPublicUser(user: StoredUser): V1UserProfile {
     username: user.username,
     planType: user.planType,
     dailyQuota: user.dailyQuota,
+    localQuotaDaily: user.localQuotaDaily,
+    cloudQuotaDaily: user.cloudQuotaDaily,
     createdAt: user.createdAt,
   };
 }
@@ -2045,6 +2080,11 @@ function toStoredUser(record: StoredUserRecord): StoredUser {
     passwordHash: record.passwordHash,
     planType: record.planType,
     dailyQuota: record.dailyQuota,
+    localQuotaDaily: record.localQuotaDaily,
+    cloudQuotaDaily: record.cloudQuotaDaily,
+    localUsedToday: record.localUsedToday,
+    cloudUsedToday: record.cloudUsedToday,
+    quotaResetDate: record.quotaResetDate,
     createdAt: record.createdAt,
     failedLoginCount: record.failedLoginCount,
     lockedUntil: record.lockedUntil,
