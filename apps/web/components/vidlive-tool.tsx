@@ -220,6 +220,8 @@ interface AuthUser {
   username: string;
   planType: 'free' | 'pro';
   dailyQuota: number;
+  localQuotaDaily: number;
+  cloudQuotaDaily: number;
   createdAt: string;
 }
 
@@ -232,6 +234,12 @@ interface AuthUsageSummary {
   quotaLimit: number;
   usedToday: number;
   remainingToday: number;
+  localLimit: number;
+  localUsed: number;
+  localRemaining: number;
+  cloudLimit: number;
+  cloudUsed: number;
+  cloudRemaining: number;
 }
 
 type GenerationResource = 'free-local' | 'pro-local' | 'pro-cloud';
@@ -2786,8 +2794,16 @@ function AuthEntryButton({
                 <dd className="min-w-0 truncate font-black">{planLabel}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <dt className="font-black text-ink/45">每日额度</dt>
-                <dd className="min-w-0 truncate font-black">{quotaLabel}</dd>
+                <dt className="font-black text-ink/45">本地生成</dt>
+                <dd className="min-w-0 truncate font-black">
+                  {session.user.localQuotaDaily < 0 ? '无限' : `${session.user.localQuotaDaily} 次/日`}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="font-black text-ink/45">云端生成</dt>
+                <dd className="min-w-0 truncate font-black">
+                  {session.user.cloudQuotaDaily < 0 ? '无限' : `${session.user.cloudQuotaDaily} 次/日`}
+                </dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="font-black text-ink/45">注册时间</dt>

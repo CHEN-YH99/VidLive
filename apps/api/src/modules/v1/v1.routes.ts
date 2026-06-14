@@ -275,7 +275,7 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     return service.getUsage(user.id);
   });
 
-  server.post('/api/v1/usage/conversions', async (request, reply) => {
+  server.post<{ Body: { mode?: 'local' | 'cloud' } }>('/api/v1/usage/conversions', async (request, reply) => {
     const user = await authenticateRequest(service, request);
 
     if (!user) {
@@ -285,8 +285,10 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
       });
     }
 
+    const mode = request.body.mode || 'local'; // 默认本地模式
+
     try {
-      return service.consumeConversionQuota(user.id, {
+      return await service.consumeConversionQuota(user.id, mode, {
         source: 'api/v1/usage/conversions',
       });
     } catch (error) {

@@ -1187,14 +1187,52 @@ export class V1Service {
     };
   }
 
-  consumeConversionQuota(userId: string, metadata: unknown): V1UsageSummary {
-    const summary = this.getUsage(userId);
-
-    if (!isUnlimitedDailyQuota(summary.remainingToday) && summary.remainingToday <= 0) {
-      throw new V1Error('quota-exceeded', 'Daily conversion quota has been used up.');
+  async consumeConversionQuota(userId: string, mode: 'local' | 'cloud', metadata: unknown): Promise<V1UsageSummary> {
+    // 先检查并重置配额（如果需要）
+    if (this.authStore) {
+      const resetUser = await this.authStore.resetQuotaIfNeeded(userId);
+      if (resetUser) {
+        this.cacheUser(toStoredUser(resetUser));
+      }
     }
 
-    this.recordUsage(userId, 'conversion.created', metadata);
+    const user = this.requireUser(userId);
+    const summary = this.getUsage(userId);
+
+    // 检查配额
+    if (mode === 'local') {
+      if (!isUnlimitedDailyQuota(summary.localRemaining) && summary.localRemaining <= 0) {
+        throw new V1Error('quota-exceeded', 'Local conversion quota has been used up.');
+      }
+    } else {
+      if (!isUnlimitedDailyQuota(summary.cloudRemaining) && summary.cloudRemaining <= 0) {
+        throw new V1Error('quota-exceeded', 'Cloud conversion quota has been used up.');
+      }
+    }
+
+    // 扣除配额
+    if (this.authStore) {
+      const updatedUser =
+        mode === 'local'
+          ? await this.authStore.consumeLocalQuota(userId)
+          : await this.authStore.consumeCloudQuota(userId);
+
+      if (updatedUser) {
+        this.cacheUser(toStoredUser(updatedUser));
+      }
+    } else {
+      // 内存模式：手动更新
+      if (mode === 'local') {
+        user.localUsedToday += 1;
+      } else {
+        user.cloudUsedToday += 1;
+      }
+    }
+
+    this.recordUsage(userId, 'conversion.created', {
+      ...(typeof metadata === 'object' && metadata !== null ? metadata : {}),
+      mode,
+    });
 
     return this.getUsage(userId);
   }

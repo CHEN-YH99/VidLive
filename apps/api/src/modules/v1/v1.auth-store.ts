@@ -249,6 +249,62 @@ export class V1AuthStore {
     return result.rows[0] ? mapUserRow(result.rows[0]) : null;
   }
 
+  async resetQuotaIfNeeded(userId: string): Promise<StoredUserRecord | null> {
+    const result = await this.pool.query<UserRow>(
+      `update users
+          set local_used_today = case
+                when quota_reset_date < current_date then 0
+                else local_used_today
+              end,
+              cloud_used_today = case
+                when quota_reset_date < current_date then 0
+                else cloud_used_today
+              end,
+              quota_reset_date = case
+                when quota_reset_date < current_date then current_date
+                else quota_reset_date
+              end,
+              updated_at = now()
+        where id = $1
+        returning id, email, username, password_hash, plan_type, daily_quota, created_at,
+                  failed_login_count, locked_until, last_login_at,
+                  local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date`,
+      [userId],
+    );
+
+    return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+  }
+
+  async consumeLocalQuota(userId: string): Promise<StoredUserRecord | null> {
+    const result = await this.pool.query<UserRow>(
+      `update users
+          set local_used_today = local_used_today + 1,
+              updated_at = now()
+        where id = $1
+        returning id, email, username, password_hash, plan_type, daily_quota, created_at,
+                  failed_login_count, locked_until, last_login_at,
+                  local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date`,
+      [userId],
+    );
+
+    return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+  }
+
+  async consumeCloudQuota(userId: string): Promise<StoredUserRecord | null> {
+    const result = await this.pool.query<UserRow>(
+      `update users
+          set cloud_used_today = cloud_used_today + 1,
+              updated_at = now()
+        where id = $1
+        returning id, email, username, password_hash, plan_type, daily_quota, created_at,
+                  failed_login_count, locked_until, last_login_at,
+                  local_quota_daily, cloud_quota_daily, local_used_today, cloud_used_today, quota_reset_date`,
+      [userId],
+    );
+
+    return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+  }
+
   async createEmailVerificationCode(
     input: CreateEmailVerificationCodeRecordInput,
   ): Promise<StoredEmailVerificationCodeRecord> {
