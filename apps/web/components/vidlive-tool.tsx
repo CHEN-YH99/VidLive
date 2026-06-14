@@ -4228,7 +4228,7 @@ function GenerationDialog({
     status === 'failed'
       ? '生成中断'
       : status === 'complete'
-        ? '生成完成'
+        ? '' // 完成时不显示文字，只显示百分比
         : isCloudMode
           ? cloudJob
             ? '云端处理返回进度'
