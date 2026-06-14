@@ -607,18 +607,18 @@ function formatPlanLabel(session: AuthSession | null): string {
   }
 
   if (session.user.planType === 'pro') {
-    return session.user.dailyQuota < 0 ? '永久专业版' : '专业版';
+    return session.user.dailyQuota < 0 ? '永久VIP' : 'VIP';
   }
 
   return '免费版';
 }
 
 function formatPlanBadge(user: AuthUser): string {
-  if (user.dailyQuota < 0) {
-    return '永久';
+  if (user.planType === 'pro') {
+    return user.dailyQuota < 0 ? '永久VIP' : 'VIP';
   }
 
-  return user.planType === 'pro' ? '专业' : '免费';
+  return '免费版';
 }
 
 function formatUserQuota(user: AuthUser): string {
@@ -2741,7 +2741,15 @@ function AuthEntryButton({
               {initials}
             </span>
             <span className="hidden max-w-20 truncate sm:inline">{session.user.username}</span>
-            <span className="rounded-md bg-[#e4f7ff] px-1.5 py-0.5 text-[10px] uppercase text-ink/70">
+            <span
+              className={`rounded-md px-1.5 py-0.5 text-[10px] font-extrabold uppercase ${
+                session.user.planType === 'pro'
+                  ? session.user.dailyQuota < 0
+                    ? 'bg-gradient-to-r from-[#f7c948] to-[#ff715b] text-white'
+                    : 'bg-[#f7c948] text-ink'
+                  : 'bg-[#e4f7ff] text-ink/70'
+              }`}
+            >
               {formatPlanBadge(session.user)}
             </span>
           </div>
@@ -2755,7 +2763,20 @@ function AuthEntryButton({
                 {initials}
               </span>
               <div className="min-w-0">
-                <p className="truncate text-sm font-black">{session.user.username}</p>
+                <p className="flex items-center gap-2 text-sm font-black">
+                  <span className="truncate">{session.user.username}</span>
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-extrabold uppercase ${
+                      session.user.planType === 'pro'
+                        ? session.user.dailyQuota < 0
+                          ? 'bg-gradient-to-r from-[#f7c948] to-[#ff715b] text-white'
+                          : 'bg-[#f7c948] text-ink'
+                        : 'bg-[#e4f7ff] text-ink/70'
+                    }`}
+                  >
+                    {formatPlanBadge(session.user)}
+                  </span>
+                </p>
                 <p className="mt-1 truncate font-semibold text-ink/60">{session.user.email}</p>
               </div>
             </div>
