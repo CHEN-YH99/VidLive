@@ -729,6 +729,7 @@ export function VidLiveTool() {
   const [exportResult, setExportResult] = useState<LocalExportResult | null>(null);
   const [cloudJob, setCloudJob] = useState<CloudJob | null>(null);
   const [cloudConsentConfirmed, setCloudConsentConfirmed] = useState(false);
+  const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [compatibilityDialogOpen, setCompatibilityDialogOpen] = useState(false);
   const [lastSuccessfulDownload, setLastSuccessfulDownload] = useState<CompatibilityDownloadContext | null>(null);
   const [downloadBusySource, setDownloadBusySource] = useState<CloudDownloadRequest['source'] | null>(null);
@@ -1018,6 +1019,7 @@ export function VidLiveTool() {
       !isGenerating &&
       !cloudBusy &&
       !cloudConsentRequired &&
+      disclaimerAccepted &&
       !isCheckingGenerationAccess &&
       !isConsumingGenerationQuota,
   );
@@ -1800,6 +1802,18 @@ export function VidLiveTool() {
                   </span>
                 </label>
               )}
+
+              <label className="flex items-start gap-3 rounded-lg border-2 border-ink bg-[#fff4df] p-3 text-sm font-bold text-ink shadow-clay-sm">
+                <input
+                  type="checkbox"
+                  checked={disclaimerAccepted}
+                  onChange={(event) => setDisclaimerAccepted(event.target.checked)}
+                  className="mt-1 h-4 w-4 accent-[#23b7a4]"
+                />
+                <span>
+                  我已阅读并同意《免责声明》：本工具仅供学习研究使用，我确认拥有素材的合法使用权，不会用于任何违法用途，并自行承担使用责任。
+                </span>
+              </label>
 
               <button
                 type="button"
