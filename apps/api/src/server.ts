@@ -1,5 +1,7 @@
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerCompatibilityRoutes } from './modules/compatibility/compatibility.routes.js';
 import { registerConversionRoutes } from './modules/conversions/conversion.routes.js';
@@ -19,6 +21,36 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   await server.register(cors, {
     origin: config.corsOrigin,
     credentials: true,
+  });
+
+  await server.register(helmet, {
+    // 配置内容安全策略
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+      },
+    },
+    // HTTP 严格传输安全
+    hsts: {
+      maxAge: 31536000, // 1 年
+      includeSubDomains: true,
+      preload: true,
+    },
+    // 其他安全头
+    frameguard: { action: 'deny' }, // 防止点击劫持
+    xssFilter: true, // XSS 过滤器
+    noSniff: true, // 防止 MIME 类型嗅探
+  });
+
+  await server.register(rateLimit, {
+    max: 100, // 每个 IP 每分钟最多 100 次请求
+    timeWindow: '1 minute',
+    cache: 10000, // 缓存 10000 个 IP
+    allowList: ['127.0.0.1'], // 本地请求不限制
+    skipOnError: true, // Redis 故障时不阻塞请求
   });
 
   await server.register(multipart, {

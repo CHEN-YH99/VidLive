@@ -67,6 +67,11 @@ function resolveJwtSecret(): string {
 function resolveCorsOrigin(): string {
   const origin = process.env.CORS_ORIGIN?.trim();
 
+  // 禁止使用通配符，当 credentials: true 时不安全
+  if (origin === '*') {
+    throw new Error('Refusing to start: CORS_ORIGIN cannot be wildcard (*) when credentials are enabled.');
+  }
+
   if (origin) {
     return origin;
   }
