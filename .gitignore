@@ -49,3 +49,7 @@ Thumbs.db
 # 线上维护手册包含敏感信息（服务器 IP、架构等），不应上传 GitHub
 # 改为本地保存或使用私有文档管理工具
 线上维护手册.md
+
+# 安全审计报告包含敏感信息（服务器 IP、邮箱等），不应上传 GitHub
+SECURITY_AUDIT.md
+SECURITY_FIX_DEPLOYMENT.md
