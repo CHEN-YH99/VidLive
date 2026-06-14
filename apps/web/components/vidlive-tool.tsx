@@ -129,8 +129,8 @@ const modeHelpText = {
 } as const;
 
 const presetHelpText: Record<ExportPresetId, string> = {
-  'standard-live-photo': '默认 3 秒，优先保留原素材比例，适合 Google Photos 或抖音的标准动态照片验证。',
-  'ios-lock-screen': '默认 2 秒，优先 9:16 竖屏，适合 Google Photos 和抖音识别；ColorOS / 鸿蒙系统相册可能不识别。',
+  'standard-live-photo': '默认 3 秒，优先保留原素材比例，适合 Google Photos 或主流视频平台的标准动态照片验证。',
+  'ios-lock-screen': '默认 2 秒，优先 9:16 竖屏，适合 Google Photos 和主流视频平台识别；ColorOS / 鸿蒙系统相册可能不识别。',
   'social-fallback': '输出 MP4 / GIF / WebP 等通用格式；适合动态照片结构无法保留时的兼容导出。',
 };
 
@@ -255,7 +255,7 @@ interface GenerationAccessState {
 const compatibilityViewerOptions: Array<{ id: CompatibilityViewerId; label: string }> = [
   { id: 'system-gallery', label: '系统相册' },
   { id: 'google-photos', label: 'Google Photos' },
-  { id: 'douyin', label: '抖音' },
+  { id: 'douyin', label: '主流视频平台' },
   { id: 'file-manager', label: '文件管理器' },
 ];
 
@@ -2180,7 +2180,7 @@ function SavePathPanel() {
         id: 'android',
         icon: <Smartphone size={20} />,
         title: '安卓实况路径',
-        text: '手机直接下载 motion-photo_MP.jpg，优先用 Google Photos 或抖音检查动态照片入口。',
+        text: '手机直接下载 motion-photo_MP.jpg，优先用 Google Photos 或主流视频平台检查动态照片入口。',
       },
       {
         id: 'desktop',
@@ -4875,7 +4875,7 @@ function CloudJobPanel({
         <div className="mt-3 rounded-lg border-2 border-ink/15 bg-[#d9f99d] p-3">
           <p className="text-xs font-black text-ink">安卓验收</p>
           <p className="mt-1 text-xs font-semibold leading-5 text-ink/65">
-            下载单文件 motion-photo_MP.jpg，优先用 Google Photos 或抖音打开。ColorOS / 鸿蒙系统相册可能只当普通照片显示。
+            下载单文件 motion-photo_MP.jpg，优先用 Google Photos 或主流视频平台打开。ColorOS / 鸿蒙系统相册可能只当普通照片显示。
           </p>
         </div>
       )}

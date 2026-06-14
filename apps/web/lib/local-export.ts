@@ -75,7 +75,7 @@ export async function generateLocalExport(
   const durationSeconds = Math.max(productLimits.minDurationSeconds, draft.endSeconds - draft.startSeconds);
   const warnings: string[] = [
     '当前本地导出的是 ZIP 素材包，不是 Android Motion Photo 单文件。',
-    '安卓实况图以云端生成的 motion-photo_MP.jpg 为准，优先用 Google Photos 或抖音复测。',
+    '安卓实况图以云端生成的 motion-photo_MP.jpg 为准，优先用 Google Photos 或主流视频平台复测。',
   ];
   const artifacts: LocalExportArtifact[] = [];
 
@@ -192,7 +192,7 @@ export async function generateLocalExport(
       id: 'readme',
       kind: 'manifest',
       label: '保存指引',
-      description: '包含 Android Motion Photo、Google Photos、抖音和厂商系统相册兼容性排查说明。',
+      description: '包含 Android Motion Photo、Google Photos、主流视频平台和厂商系统相册兼容性排查说明。',
       fileName: `${baseName}-README.txt`,
       mimeType: 'text/plain',
       blob: readmeBlob,
@@ -347,7 +347,7 @@ function createReadmeText(draft: ConversionDraft, warnings: string[]): string {
     '',
     '保存路径建议：',
     '1. 安卓浏览器：云端生成后直接下载 motion-photo_MP.jpg。',
-    '2. Google Photos / 抖音：优先用它们验证动态图入口。',
+    '2. Google Photos / 主流视频平台：优先用它们验证动态图入口。',
     '3. ColorOS / 鸿蒙系统相册：若只显示静态图，按查看器兼容性限制记录。',
     '4. 桌面浏览器：下载 ZIP 后，取出素材做通用格式交付或兼容复测。',
     '',
