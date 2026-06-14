@@ -5182,11 +5182,14 @@ function StatusPill({ icon, label }: { icon: ReactNode; label: string }) {
 }
 
 function ProgressBar({ value, label }: { value: number; label: string }) {
+  const isComplete = value >= 100;
+
   return (
     <div className="clay-card bg-white p-4">
       <div className="mb-2 flex items-center justify-between text-sm font-black text-ink">
         <span className="flex items-center gap-2">
-          <Loader2 size={16} className="animate-spin text-[#6aa9ff]" />
+          {!isComplete && <Loader2 size={16} className="animate-spin text-[#6aa9ff]" />}
+          {isComplete && <CheckCircle2 size={16} className="text-[#23b7a4]" />}
           {label}
         </span>
         <span>{value}%</span>
