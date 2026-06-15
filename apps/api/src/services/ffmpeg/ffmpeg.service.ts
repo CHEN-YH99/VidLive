@@ -73,7 +73,10 @@ export class FfmpegService {
       '-show_streams',
       '-show_format',
       filePath,
-    ]);
+    ], {
+      timeout: 15000, // P0-7: ffprobe 超时 15 秒
+      maxBuffer: 10 * 1024 * 1024,
+    });
     const output = JSON.parse(stdout) as FfprobeOutput;
     const streams = output.streams ?? [];
     const videoStream = streams.find((stream) => stream.codec_type === 'video');
@@ -133,6 +136,7 @@ export class FfmpegService {
     args.push(options.outputPath);
 
     await execFileAsync('ffmpeg', args, {
+      timeout: 120000, // P0-7: ffmpeg 超时 120 秒
       maxBuffer: 10 * 1024 * 1024,
     });
 
@@ -195,6 +199,7 @@ export class FfmpegService {
     args.push(options.outputPath);
 
     await execFileAsync('ffmpeg', args, {
+      timeout: 120000, // P0-7: ffmpeg 超时 120 秒
       maxBuffer: 10 * 1024 * 1024,
     });
 
@@ -232,6 +237,7 @@ export class FfmpegService {
     );
 
     await execFileAsync('ffmpeg', args, {
+      timeout: 120000, // P0-7: ffmpeg 超时 120 秒
       maxBuffer: 10 * 1024 * 1024,
     });
 

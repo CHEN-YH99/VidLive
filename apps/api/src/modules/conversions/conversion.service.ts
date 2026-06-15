@@ -123,6 +123,7 @@ export class ConversionService {
   private readonly livePhotoService: LivePhotoService;
   private readonly storageService: ObjectStorageService;
   private readonly logger: ConversionLogger | null;
+  private readonly config: AppConfig | undefined; // P0-8: 保存 config 引用
   private readonly redisConnection: Redis | null;
   private readonly queue: Queue<CloudConversionJobRecord, CloudQueueResult, string> | null;
   private readonly worker: Worker<CloudConversionJobRecord, CloudQueueResult, string> | null;
@@ -131,6 +132,7 @@ export class ConversionService {
     this.livePhotoService = options.livePhotoService ?? new LivePhotoService();
     this.storageService = options.storageService ?? new ObjectStorageService(createStorageConfig(options.config));
     this.logger = options.logger ?? null;
+    this.config = options.config; // P0-8: 保存 config
 
     if (options.config?.redisUrl) {
       this.redisConnection = new Redis(options.config.redisUrl, {
@@ -180,6 +182,22 @@ export class ConversionService {
 
   async createCloudJob(input: CreateCloudJobInput): Promise<CloudConversionJob> {
     this.cleanupExpiredJobs();
+
+    // P0-8: 检查单用户并发任务数
+    const userActiveJobs = Array.from(this.jobs.values()).filter(
+      (job) => job.userId === input.userId && (job.status === 'queued' || job.status === 'processing')
+    ).length;
+
+    if (userActiveJobs >= (this.config?.cloudUserMaxActiveJobs ?? 1)) {
+      throw new Error('用户并发任务数已达上限，请等待当前任务完成。');
+    }
+
+    // P0-8: 检查全局队列长度
+    const queuedJobs = Array.from(this.jobs.values()).filter((job) => job.status === 'queued').length;
+
+    if (queuedJobs >= (this.config?.cloudQueueMaxWaiting ?? 20)) {
+      throw new Error('队列已满，请稍后再试。');
+    }
 
     const now = new Date();
     const id = input.id ?? randomUUID();

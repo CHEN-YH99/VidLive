@@ -172,6 +172,17 @@ export async function registerConversionRoutes(server: FastifyInstance, config: 
       sizeBytes: sourceStat.size,
       draft: createDraftFromQuery(request.query),
       retentionHours: config.cloudRetentionHours,
+    }).catch((error) => {
+      // P0-8: 处理队列和并发限制错误
+      if (error instanceof Error) {
+        if (error.message.includes('并发任务数') || error.message.includes('队列已满')) {
+          throw reply.status(429).send({
+            code: 'queue-full',
+            message: error.message,
+          });
+        }
+      }
+      throw error;
     });
 
     return reply.status(202).send(job);

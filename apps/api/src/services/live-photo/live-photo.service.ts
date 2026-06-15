@@ -252,7 +252,10 @@ export class LivePhotoService {
         '-QuickTime:LivePhotoAuto=1',
         '-QuickTime:Make=Apple',
         input.movPath,
-      ]);
+      ], {
+        timeout: 30000, // P0-7: exiftool 超时 30 秒
+        maxBuffer: 2 * 1024 * 1024,
+      });
       report.videoContentIdentifierInjected = await exifOutputContains(
         input.movPath,
         ['-ContentIdentifier'],
@@ -275,7 +278,10 @@ export class LivePhotoService {
         `-ContentIdentifier=${input.contentId}`,
         `-ImageUniqueID=${input.contentId}`,
         input.photoPath,
-      ]);
+      ], {
+        timeout: 30000, // P0-7: exiftool 超时 30 秒
+        maxBuffer: 2 * 1024 * 1024,
+      });
       report.photoContentIdentifierInjected = await exifOutputContains(
         input.photoPath,
         ['-ContentIdentifier'],
@@ -319,7 +325,10 @@ export class LivePhotoService {
         '-Model',
         '-MakerNotes',
         photoPath,
-      ]);
+      ], {
+        timeout: 30000, // P0-7: exiftool 超时 30 秒
+        maxBuffer: 2 * 1024 * 1024,
+      });
 
       return true;
     } catch (error) {
@@ -333,7 +342,9 @@ export class LivePhotoService {
 
 async function isCommandAvailable(command: string, args: string[]): Promise<boolean> {
   try {
-    await execFileAsync(command, args);
+    await execFileAsync(command, args, {
+      timeout: 10000, // P0-7: 命令检测超时 10 秒
+    });
     return true;
   } catch {
     return false;

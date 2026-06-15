@@ -16,6 +16,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
       level: config.logLevel,
     },
     bodyLimit: config.cloudFileSizeBytes,
+    trustProxy: true, // P0-9: 信任代理，正确获取客户端 IP
   });
 
   await server.register(cors, {

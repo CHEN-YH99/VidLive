@@ -35,7 +35,10 @@ export class AndroidMotionPhotoService {
     await writeFile(xmpPath, xmp);
 
     try {
-      await execFileAsync('exiftool', ['-overwrite_original', `-XMP<=${xmpPath}`, basePhotoPath]);
+      await execFileAsync('exiftool', ['-overwrite_original', `-XMP<=${xmpPath}`, basePhotoPath], {
+        timeout: 30000, // P0-7: exiftool 超时 30 秒
+        maxBuffer: 2 * 1024 * 1024,
+      });
     } catch {
       const sourcePhoto = await readFile(input.photoPath);
       await writeFile(basePhotoPath, injectXmpIntoJpeg(sourcePhoto, xmp));

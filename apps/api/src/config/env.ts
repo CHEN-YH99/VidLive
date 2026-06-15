@@ -15,6 +15,8 @@ export interface AppConfig {
   cloudFileSizeBytes: number;
   cloudRetentionHours: number;
   cloudQueueConcurrency: number;
+  cloudQueueMaxWaiting: number; // P0-8: 队列最大等待数
+  cloudUserMaxActiveJobs: number; // P0-8: 单用户最大并发任务数
   databaseUrl: string | null;
   redisUrl: string | null;
   r2Endpoint: string | null;
@@ -139,6 +141,8 @@ export function loadConfig(): AppConfig {
     cloudFileSizeBytes: readNumber('MAX_CLOUD_FILE_SIZE', productLimits.cloudFileSizeBytes),
     cloudRetentionHours: readNumber('CLOUD_RETENTION_HOURS', 24),
     cloudQueueConcurrency: readNumber('CLOUD_QUEUE_CONCURRENCY', 1),
+    cloudQueueMaxWaiting: readNumber('CLOUD_QUEUE_MAX_WAITING', 20), // P0-8
+    cloudUserMaxActiveJobs: readNumber('CLOUD_USER_MAX_ACTIVE_JOBS', 1), // P0-8
     databaseUrl: readOptionalString('DATABASE_URL'),
     redisUrl: readOptionalString('REDIS_URL'),
     r2Endpoint: readOptionalString('R2_ENDPOINT'),
