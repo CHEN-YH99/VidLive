@@ -22,6 +22,7 @@ services:
         limits:
           cpus: '1.0'
           memory: 512M
+          pids: 100
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -37,7 +38,6 @@ services:
       - FOWNER
       - SETGID
       - SETUID
-    pids_limit: 100
 
   redis:
     image: redis:7-alpine
@@ -59,6 +59,7 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
+          pids: 50
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -71,7 +72,6 @@ services:
     cap_add:
       - SETGID
       - SETUID
-    pids_limit: 50
 
   migrate:
     build:
@@ -138,6 +138,7 @@ services:
         limits:
           cpus: '2.0'
           memory: 2G
+          pids: 200
         reservations:
           cpus: '0.5'
           memory: 512M
@@ -151,7 +152,6 @@ services:
       - CHOWN
       - SETGID
       - SETUID
-    pids_limit: 200
     # P2-32: 临时文件系统（可选，会影响性能）
     # read_only: true
     # tmpfs:
