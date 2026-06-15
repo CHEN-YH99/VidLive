@@ -69,6 +69,7 @@ export interface CloudConversionMetrics {
 
 export interface CreateCloudJobInput {
   id?: string;
+  userId: string;
   sourcePath: string;
   workDir: string;
   fileName: string;
@@ -79,6 +80,7 @@ export interface CreateCloudJobInput {
 }
 
 interface CloudConversionJobRecord extends CloudConversionJob {
+  userId: string;
   sourcePath: string;
   workDir: string;
   zipPath: string | null;
@@ -184,6 +186,7 @@ export class ConversionService {
     const expiresAt = new Date(now.getTime() + input.retentionHours * 60 * 60 * 1000);
     const job: CloudConversionJobRecord = {
       id,
+      userId: input.userId,
       status: 'queued',
       progress: 5,
       draft: input.draft,
@@ -248,6 +251,11 @@ export class ConversionService {
     const job = this.jobs.get(id);
 
     return job ? toPublicJob(job) : null;
+  }
+
+  isJobOwnedByUser(jobId: string, userId: string): boolean {
+    const job = this.jobs.get(jobId);
+    return job ? job.userId === userId : false;
   }
 
   async getDownload(id: string): Promise<{ path: string; fileName: string; sizeBytes: number } | null> {

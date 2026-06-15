@@ -1237,6 +1237,37 @@ export class V1Service {
     return this.getUsage(userId);
   }
 
+  async consumeCloudQuota(userId: string): Promise<void> {
+    // 先检查并重置配额（如果需要）
+    if (this.authStore) {
+      const resetUser = await this.authStore.resetQuotaIfNeeded(userId);
+      if (resetUser) {
+        this.cacheUser(toStoredUser(resetUser));
+      }
+    }
+
+    const user = this.requireUser(userId);
+    const summary = this.getUsage(userId);
+
+    // 检查配额
+    if (!isUnlimitedDailyQuota(summary.cloudRemaining) && summary.cloudRemaining <= 0) {
+      throw new V1Error('quota-exceeded', '云端转码额度已用完。');
+    }
+
+    // 扣除配额
+    if (this.authStore) {
+      const updatedUser = await this.authStore.consumeCloudQuota(userId);
+      if (updatedUser) {
+        this.cacheUser(toStoredUser(updatedUser));
+      }
+    } else {
+      // 内存模式：手动更新
+      user.cloudUsedToday += 1;
+    }
+
+    this.recordUsage(userId, 'conversion.cloud_quota_consumed', { userId });
+  }
+
   recommendKeyframes(input: KeyframeRecommendationInput): KeyframeRecommendation[] {
     const duration = Math.max(1, Math.min(input.durationSeconds ?? 3, 30));
     const middle = duration / 2;

@@ -61,10 +61,16 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   });
 
   registerHealthRoutes(server);
-  registerPhaseZeroRoutes(server, config);
-  registerConversionRoutes(server, config);
+
+  // phase0 调试接口仅在非生产环境注册
+  if (process.env.NODE_ENV !== 'production') {
+    registerPhaseZeroRoutes(server, config);
+  }
+
+  // 先初始化 V1 服务，用于转码接口鉴权
+  const v1Service = await registerV1Routes(server, config);
+  await registerConversionRoutes(server, config, v1Service);
   registerCompatibilityRoutes(server, config);
-  await registerV1Routes(server, config);
 
   server.setErrorHandler((error, _request, reply) => {
     server.log.error(error);

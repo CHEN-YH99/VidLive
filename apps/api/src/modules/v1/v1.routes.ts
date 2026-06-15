@@ -68,7 +68,7 @@ interface ToolParams {
   toolId: string;
 }
 
-export async function registerV1Routes(server: FastifyInstance, config: AppConfig): Promise<void> {
+export async function registerV1Routes(server: FastifyInstance, config: AppConfig): Promise<V1Service> {
   const service = await V1Service.create(config.jwtSecret, config.databaseUrl, config.permanentMemberEmails, {
     emailCodeWebhookUrl: config.emailCodeWebhookUrl,
     emailCodeFrom: config.emailCodeFrom,
@@ -542,6 +542,8 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
   server.get('/api/v1/ecosystem/summary', async () => {
     return service.getExpansionSummary();
   });
+
+  return service;
 }
 
 async function authenticateRequest(service: V1Service, request: FastifyRequest) {
