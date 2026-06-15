@@ -28,6 +28,7 @@ export interface AppConfig {
   authCookieSecure: boolean;
   v1StorePath: string;
   permanentMemberEmails: string[];
+  adminEmails: string[]; // P1-18: 管理员邮箱列表，与永久会员拆分
   emailCodeWebhookUrl: string | null;
   emailCodeFrom: string;
   emailCodeLogEnabled: boolean;
@@ -154,6 +155,7 @@ export function loadConfig(): AppConfig {
     authCookieSecure: resolveAuthCookieSecure(),
     v1StorePath: process.env.V1_STORE_PATH ?? './data/v1-store.json',
     permanentMemberEmails: readEmailList('PERMANENT_MEMBER_EMAILS'),
+    adminEmails: readEmailList('ADMIN_EMAILS'), // P1-18: 独立管理员配置
     emailCodeWebhookUrl: readOptionalString('EMAIL_CODE_WEBHOOK_URL'),
     emailCodeFrom: process.env.EMAIL_CODE_FROM ?? 'VidLive <no-reply@vidlive.local>',
     emailCodeLogEnabled: process.env.EMAIL_CODE_LOG_ENABLED

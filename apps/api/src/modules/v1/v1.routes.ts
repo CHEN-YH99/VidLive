@@ -69,10 +69,15 @@ interface ToolParams {
 }
 
 export async function registerV1Routes(server: FastifyInstance, config: AppConfig): Promise<V1Service> {
-  const service = await V1Service.create(config.jwtSecret, config.databaseUrl, config.permanentMemberEmails, {
-    emailCodeWebhookUrl: config.emailCodeWebhookUrl,
-    emailCodeFrom: config.emailCodeFrom,
-    emailCodeLogEnabled: config.emailCodeLogEnabled,
+  const service = await V1Service.create(
+    config.jwtSecret,
+    config.databaseUrl,
+    config.permanentMemberEmails,
+    config.adminEmails, // P1-18
+    {
+      emailCodeWebhookUrl: config.emailCodeWebhookUrl,
+      emailCodeFrom: config.emailCodeFrom,
+      emailCodeLogEnabled: config.emailCodeLogEnabled,
     emailCodeResend: config.resendApiKey
       ? {
           apiKey: config.resendApiKey,
@@ -92,6 +97,71 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
       : null,
   });
 
+  // P1-16: CSRF 防护 - 校验 Origin 或 Referer
+  function validateCsrfForCookieAuth(request: FastifyRequest, reply: FastifyReply): boolean {
+    const authorization = request.headers.authorization;
+
+    // Bearer token 豁免 CSRF 校验
+    if (authorization?.startsWith('Bearer ')) {
+      return true;
+    }
+
+    // Cookie 鉴权的状态变更请求必须校验 Origin/Referer
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
+      const origin = request.headers.origin;
+      const referer = request.headers.referer;
+      const allowedOrigins = [config.corsOrigin];
+
+      // 优先校验 Origin
+      if (origin) {
+        if (!allowedOrigins.includes(origin)) {
+          reply.status(403).send({
+            code: 'csrf-validation-failed',
+            message: '请求来源验证失败。',
+          });
+          return false;
+        }
+      } else if (referer) {
+        // 如果没有 Origin，校验 Referer
+        const refererOrigin = new URL(referer).origin;
+        if (!allowedOrigins.includes(refererOrigin)) {
+          reply.status(403).send({
+            code: 'csrf-validation-failed',
+            message: '请求来源验证失败。',
+          });
+          return false;
+        }
+      } else {
+        // 没有 Origin 也没有 Referer，拒绝请求
+        reply.status(403).send({
+          code: 'csrf-validation-failed',
+          message: '缺少请求来源信息。',
+        });
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  // P1-16: 为所有状态变更接口添加 CSRF 检查 Hook
+  server.addHook('preHandler', async (request, reply) => {
+    const csrfProtectedPaths = [
+      '/api/v1/auth/logout',
+      '/api/v1/usage/conversions',
+      '/api/v1/billing/',
+      '/api/v1/api-keys',
+      '/api/conversions/cloud-jobs',
+    ];
+
+    const needsCsrfCheck = csrfProtectedPaths.some(path => request.url.startsWith(path));
+
+    if (needsCsrfCheck && !validateCsrfForCookieAuth(request, reply)) {
+      // 已经在 validateCsrfForCookieAuth 中发送了响应
+      return;
+    }
+  });
+
   server.get('/api/v1/auth/challenge', async () => {
     return service.createLoginChallenge();
   });
@@ -99,7 +169,6 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
   // P1-15: 验证码接口独立限流（更严格）
   server.addHook('preHandler', async (request, reply) => {
     if (request.url.startsWith('/api/v1/auth/email-codes')) {
-      const rateLimitKey = `email-code:${request.ip}`;
       // 这里简化实现，实际应该用 Redis 或内存存储
       // 每个 IP 每小时最多 10 次验证码请求
       const header = reply.getHeader('X-RateLimit-Remaining');

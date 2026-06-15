@@ -235,6 +235,7 @@ export class V1Service {
   private readonly loginEmailTickets = new Map<string, LoginEmailTicket>();
 
   private readonly permanentMemberEmails: Set<string>;
+  private readonly adminEmails: Set<string>; // P1-18: 独立管理员邮箱列表
   private readonly emailCodeFrom: string;
   private readonly emailCodeWebhookUrl: string | null;
   private readonly emailCodeLogEnabled: boolean;
@@ -246,9 +247,11 @@ export class V1Service {
     private readonly jwtSecret: string,
     private readonly authStore: V1AuthStore | null = null,
     permanentMemberEmails: readonly string[] = [],
+    adminEmails: readonly string[] = [], // P1-18
     options: V1ServiceOptions = {},
   ) {
     this.permanentMemberEmails = new Set(permanentMemberEmails.map((email) => normalizeEmail(email)).filter(Boolean));
+    this.adminEmails = new Set(adminEmails.map((email) => normalizeEmail(email)).filter(Boolean)); // P1-18
     this.emailCodeFrom = options.emailCodeFrom ?? 'VidLive <no-reply@vidlive.local>';
     this.emailCodeWebhookUrl = options.emailCodeWebhookUrl ?? null;
     this.emailCodeLogEnabled = options.emailCodeLogEnabled ?? process.env.NODE_ENV !== 'production';
@@ -261,11 +264,12 @@ export class V1Service {
     jwtSecret: string,
     databaseUrl: string | null,
     permanentMemberEmails: readonly string[] = [],
+    adminEmails: readonly string[] = [], // P1-18
     options: V1ServiceOptions = {},
   ): Promise<V1Service> {
     const authStore = databaseUrl ? await V1AuthStore.connect(databaseUrl) : null;
 
-    return new V1Service(jwtSecret, authStore, permanentMemberEmails, options);
+    return new V1Service(jwtSecret, authStore, permanentMemberEmails, adminEmails, options);
   }
 
   createLoginChallenge(): V1AuthChallenge {
@@ -1833,11 +1837,21 @@ export class V1Service {
     return this.permanentMemberEmails.has(normalizeEmail(email));
   }
 
-  // 管理员判定：复用永久会员邮箱白名单，避免引入额外角色体系。仅白名单内账号可访问商业统计等管理接口。
+  // P1-18: 管理员判定：使用独立的 adminEmails，不复用永久会员邮箱
+  // Fail closed: 未配置管理员时，所有管理接口返回 403
   isAdminUser(userId: string): boolean {
     const user = this.users.get(userId);
 
-    return user ? this.isPermanentMemberEmail(user.email) : false;
+    return user ? this.isAdminEmail(user.email) : false;
+  }
+
+  private isAdminEmail(email: string): boolean {
+    // P1-18: 如果没有配置管理员，则没有任何人是管理员（fail closed）
+    if (this.adminEmails.size === 0) {
+      return false;
+    }
+
+    return this.adminEmails.has(normalizeEmail(email));
   }
 
   private requireUser(userId: string): StoredUser {

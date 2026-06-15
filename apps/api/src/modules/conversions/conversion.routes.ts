@@ -40,6 +40,17 @@ interface CloudJobParams {
   jobId: string;
 }
 
+// P1-20: 文件名净化函数，防止路径遍历
+function sanitizeFileName(fileName: string): string {
+  // 移除路径分隔符和特殊字符
+  return fileName
+    .replace(/\.\./g, '') // 移除 ..
+    .replace(/[\/\\]/g, '') // 移除路径分隔符
+    .replace(/[<>:"|?*\x00-\x1F]/g, '') // 移除非法字符
+    .trim()
+    .slice(0, 255) || 'file'; // 限制长度，提供默认值
+}
+
 export async function registerConversionRoutes(server: FastifyInstance, config: AppConfig, v1Service: V1Service): Promise<void> {
   const conversionService = new ConversionService({
     config,
