@@ -16,6 +16,28 @@ services:
       retries: 10
     networks:
       - vidlive
+    # P2-30: 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    # P2-31: 安全选项
+    security_opt:
+      - no-new-privileges:true
+    # P2-33: 能力限制
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    pids_limit: 100
 
   redis:
     image: redis:7-alpine
@@ -31,6 +53,25 @@ services:
       retries: 10
     networks:
       - vidlive
+    # P2-30: 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    # P2-31: 安全选项
+    security_opt:
+      - no-new-privileges:true
+    # P2-33: 能力限制
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    pids_limit: 50
 
   migrate:
     build:
@@ -91,6 +132,31 @@ services:
       start_period: 30s
     networks:
       - vidlive
+    # P2-30: 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    # P2-31: 安全选项
+    security_opt:
+      - no-new-privileges:true
+    # P2-33: 能力限制
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    pids_limit: 200
+    # P2-32: 临时文件系统（可选，会影响性能）
+    # read_only: true
+    # tmpfs:
+    #   - /tmp
+    #   - /app/uploads
 
   web:
     build:

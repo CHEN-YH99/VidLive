@@ -14,6 +14,21 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   const server = Fastify({
     logger: {
       level: config.logLevel,
+      // P2-25: 自动脱敏日志中的敏感信息
+      serializers: {
+        req(request) {
+          return {
+            method: request.method,
+            url: request.url,
+            headers: {
+              ...request.headers,
+              authorization: request.headers.authorization ? '***' : undefined,
+              cookie: request.headers.cookie ? '***' : undefined,
+            },
+            remoteAddress: request.ip,
+          };
+        },
+      },
     },
     bodyLimit: config.cloudFileSizeBytes,
     trustProxy: true, // P0-9: 信任代理，正确获取客户端 IP
@@ -74,12 +89,20 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
   await registerConversionRoutes(server, config, v1Service);
   registerCompatibilityRoutes(server, config);
 
-  server.setErrorHandler((error, _request, reply) => {
+  // P2-28: 统一错误处理，生产环境不泄露堆栈
+  server.setErrorHandler((error, request, reply) => {
     server.log.error(error);
 
-    reply.status(500).send({
-      code: 'internal-server-error',
-      message: '服务器处理 VidLive 请求时出现异常。',
+    const isDevelopment = process.env.NODE_ENV !== 'production';
+    const statusCode = (error as any).statusCode || 500;
+    const code = (error as any).code || 'internal-server-error';
+    const message = error instanceof Error ? error.message : '服务器处理请求时出现异常。';
+    const stack = error instanceof Error ? error.stack : undefined;
+
+    reply.status(statusCode).send({
+      code,
+      message: isDevelopment ? message : '服务器处理请求时出现异常。',
+      ...(isDevelopment && stack ? { stack } : {}),
     });
   });
 
