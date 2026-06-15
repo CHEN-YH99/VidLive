@@ -66,10 +66,13 @@ services:
     # P2-31: 安全选项
     security_opt:
       - no-new-privileges:true
-    # P2-33: 能力限制
+    # P2-33: 能力限制（Redis 需要更多能力）
     cap_drop:
       - ALL
     cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
       - SETGID
       - SETUID
 
