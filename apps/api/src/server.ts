@@ -46,6 +46,7 @@ export async function createServer(config: AppConfig): Promise<FastifyInstance> 
     noSniff: true, // 防止 MIME 类型嗅探
   });
 
+  // P1-15: 全局限流（宽松，针对一般查询）
   await server.register(rateLimit, {
     max: 100, // 每个 IP 每分钟最多 100 次请求
     timeWindow: '1 minute',

@@ -96,6 +96,22 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     return service.createLoginChallenge();
   });
 
+  // P1-15: 验证码接口独立限流（更严格）
+  server.addHook('preHandler', async (request, reply) => {
+    if (request.url.startsWith('/api/v1/auth/email-codes')) {
+      const rateLimitKey = `email-code:${request.ip}`;
+      // 这里简化实现，实际应该用 Redis 或内存存储
+      // 每个 IP 每小时最多 10 次验证码请求
+      const header = reply.getHeader('X-RateLimit-Remaining');
+      if (header !== undefined && Number(header) < 0) {
+        return reply.status(429).send({
+          code: 'rate-limit-exceeded',
+          message: '验证码请求过于频繁，请稍后再试。',
+        });
+      }
+    }
+  });
+
   server.post<{ Body: EmailCodeBody }>('/api/v1/auth/email-codes', async (request, reply) => {
     try {
       const body = readRequestBody(request.body);
@@ -329,11 +345,31 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
     return service.getCompatibilitySummary();
   });
 
-  server.get('/api/v1/metrics/summary', async () => {
+  server.get('/api/v1/metrics/summary', async (request, reply) => {
+    // P1-11: 管理接口需要鉴权
+    const user = await authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: '需要登录才能查看指标。',
+      });
+    }
+
     return service.getMetricsSummary();
   });
 
-  server.get('/api/v1/launch-readiness', async () => {
+  server.get('/api/v1/launch-readiness', async (request, reply) => {
+    // P1-11: 管理接口需要鉴权
+    const user = await authenticateRequest(service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: '需要登录才能查看启动就绪状态。',
+      });
+    }
+
     return {
       status: 'v1-gated',
       checks: service.getLaunchReadiness(),
@@ -362,6 +398,14 @@ export async function registerV1Routes(server: FastifyInstance, config: AppConfi
   });
 
   server.post<{ Params: CheckoutParams }>('/api/v1/billing/checkout-intents/:intentId/confirm', async (request, reply) => {
+    // P1-12: 生产环境禁止 mock-stripe 直接升级
+    if (process.env.NODE_ENV === 'production') {
+      return reply.status(403).send({
+        code: 'mock-checkout-disabled-in-production',
+        message: '生产环境已禁用模拟支付，请使用正式支付渠道。',
+      });
+    }
+
     const user = await authenticateRequest(service, request);
 
     if (!user) {

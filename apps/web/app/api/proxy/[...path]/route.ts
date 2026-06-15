@@ -13,6 +13,12 @@ type ProxyContext = {
 };
 
 const defaultTargetOrigin = 'http://127.0.0.1:8000';
+const allowedTargets = [
+  'http://127.0.0.1:8000',
+  'http://localhost:8000',
+  'http://backend:8000', // Docker 内部
+];
+
 const hopByHopHeaders = [
   'connection',
   'content-length',
@@ -28,8 +34,32 @@ const hopByHopHeaders = [
 const responseRewriteHeaders = ['content-encoding', 'content-length', 'transfer-encoding'];
 
 async function proxyRequest(request: Request, context: ProxyContext): Promise<Response> {
+  // P1-13: 生产环境禁用代理或严格限制目标
+  if (process.env.NODE_ENV === 'production' && !process.env.API_PROXY_ENABLED) {
+    return Response.json(
+      {
+        code: 'api-proxy-disabled',
+        message: '生产环境已禁用 API 代理。',
+      },
+      { status: 403 },
+    );
+  }
+
   const { path = [] } = await context.params;
   const targetUrl = new URL(createTargetUrl(path, request.url));
+
+  // P1-13: 验证目标地址在白名单内
+  const targetOrigin = `${targetUrl.protocol}//${targetUrl.host}`;
+  if (!allowedTargets.includes(targetOrigin)) {
+    return Response.json(
+      {
+        code: 'api-proxy-target-not-allowed',
+        message: 'API 代理目标地址不在允许列表中。',
+      },
+      { status: 403 },
+    );
+  }
+
   const headers = new Headers(request.headers);
 
   for (const header of hopByHopHeaders) {
@@ -39,11 +69,11 @@ async function proxyRequest(request: Request, context: ProxyContext): Promise<Re
   try {
     return await pipeNodeRequest(request, targetUrl, headers);
   } catch (error) {
+    // P1-13: 错误响应不回显目标地址
     return Response.json(
       {
         code: 'api-proxy-failed',
         message: error instanceof Error ? error.message : 'VidLive API 代理请求失败。',
-        target: targetUrl.toString(),
       },
       { status: 502 },
     );

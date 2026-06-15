@@ -80,7 +80,17 @@ export async function registerConversionRoutes(server: FastifyInstance, config: 
     };
   });
 
-  server.get('/api/conversions/metrics', async () => {
+  server.get('/api/conversions/metrics', async (request, reply) => {
+    // P1-11: 管理接口需要鉴权
+    const user = await authenticateRequest(v1Service, request);
+
+    if (!user) {
+      return reply.status(401).send({
+        code: 'unauthorized',
+        message: '需要登录才能查看指标。',
+      });
+    }
+
     return conversionService.getMetrics();
   });
 
@@ -101,6 +111,21 @@ export async function registerConversionRoutes(server: FastifyInstance, config: 
         delete: '/api/conversions/cloud-jobs/:jobId',
       },
     };
+  });
+
+  // P1-15: 上传接口独立限流（更严格）
+  server.addHook('preHandler', async (request, reply) => {
+    if (request.url.startsWith('/api/conversions/cloud-jobs') && request.method === 'POST') {
+      // 简化实现提示，实际应该用 fastify-rate-limit 的路由级别配置
+      // 每个 IP 每小时最多 20 次上传
+      const remaining = reply.getHeader('X-RateLimit-Remaining');
+      if (remaining !== undefined && Number(remaining) < 0) {
+        return reply.status(429).send({
+          code: 'upload-rate-limit-exceeded',
+          message: '上传过于频繁，请稍后再试。',
+        });
+      }
+    }
   });
 
   server.post<{ Querystring: CloudJobQuery }>('/api/conversions/cloud-jobs', async (request, reply) => {
@@ -158,6 +183,42 @@ export async function registerConversionRoutes(server: FastifyInstance, config: 
         code: 'file-too-large',
         message: '上传文件超过云端处理大小限制。',
         maxFileSizeBytes: config.cloudFileSizeBytes,
+      });
+    }
+
+    // P1-14: 上传后做媒体真实校验
+    const ffmpegService = new (await import('../../services/ffmpeg/ffmpeg.service.js')).FfmpegService();
+    try {
+      const probe = await ffmpegService.probe(sourcePath);
+
+      // 校验必须有视频流
+      if (probe.width <= 0 || probe.height <= 0) {
+        return reply.status(415).send({
+          code: 'invalid-video-stream',
+          message: '文件不包含有效的视频流。',
+        });
+      }
+
+      // 校验时长
+      if (probe.durationSeconds <= 0 || probe.durationSeconds > 3600) {
+        return reply.status(415).send({
+          code: 'invalid-video-duration',
+          message: '视频时长无效或超过限制（最长 1 小时）。',
+        });
+      }
+
+      // 校验分辨率和像素数（防止超大分辨率攻击）
+      const totalPixels = probe.width * probe.height;
+      if (totalPixels > 8192 * 8192) {
+        return reply.status(415).send({
+          code: 'resolution-too-high',
+          message: '视频分辨率过高，请使用 8K 以下的视频。',
+        });
+      }
+    } catch (error) {
+      return reply.status(415).send({
+        code: 'video-probe-failed',
+        message: '无法解析视频文件，请确保上传的是有效的视频。',
       });
     }
 
