@@ -184,11 +184,30 @@ services:
           "node -e \"fetch('http://127.0.0.1:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""
         ]
       interval: 20s
-      timeout: 5s
+      timeout: 10s
       retries: 10
-      start_period: 30s
+      start_period: 60s
     networks:
       - vidlive
+    # P2-30: 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+          pids: 100
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    # P2-31: 安全选项
+    security_opt:
+      - no-new-privileges:true
+    # P2-33: 能力限制
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
 
   gateway:
     image: nginx:1.27-alpine
